@@ -45,11 +45,15 @@ function showTokenSetup(visible) {
 
 // ---------- GitHub API ----------
 async function ghFetchRaw(path) {
-  // Try raw.githubusercontent first (no auth, no rate limit), fall back to API contents
-  const url = RAW_BASE + path + `?_=${Date.now()}`;
-  const res = await fetch(url, { cache: "no-store" });
+  // API contents endpoint with Accept: raw — works for both public and private
+  // repos when an auth token is present.
+  const token = getToken();
+  const headers = { Accept: "application/vnd.github.raw" };
+  if (token) headers.Authorization = `Bearer ${token}`;
+  const url = `${API_BASE}/contents/${path}?ref=${BRANCH}&_=${Date.now()}`;
+  const res = await fetch(url, { headers, cache: "no-store" });
   if (res.status === 404) return null;
-  if (!res.ok) throw new Error(`raw fetch failed: ${res.status}`);
+  if (!res.ok) throw new Error(`fetch ${path} failed: ${res.status}`);
   return res.text();
 }
 
@@ -755,18 +759,20 @@ async function init() {
 
   if (!getToken()) {
     showTokenSetup(true);
+    document.getElementById("status").textContent = "Token bekleniyor (private repo)";
+  } else {
+    await loadState();
   }
 
-  await loadState();
-
   // Wire up handlers
-  document.getElementById("token-save").addEventListener("click", () => {
+  document.getElementById("token-save").addEventListener("click", async () => {
     const t = document.getElementById("token-input").value.trim();
     if (!t) return;
     saveToken(t);
     showTokenSetup(false);
     document.getElementById("token-input").value = "";
-    toast("Token kaydedildi", "good");
+    toast("Token kaydedildi, veri çekiliyor...", "good");
+    await loadState();
   });
   document.getElementById("logout-btn").addEventListener("click", () => {
     clearToken();
