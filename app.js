@@ -153,7 +153,7 @@ function csvStringify(rows, headers) {
 
 // ---------- State load ----------
 async function loadState() {
-  document.getElementById("status").textContent = "GitHub'dan okunuyor...";
+  document.getElementById("status").textContent = "Loading from GitHub...";
   try {
     const [posTxt, txnTxt, cashTxt] = await Promise.all([
       ghFetchRaw("positions.csv"),
@@ -168,11 +168,11 @@ async function loadState() {
     renderPortfolio();
     renderTransactions();
     refreshSellDropdown();
-    document.getElementById("last-sync").textContent = "Senkron: " + new Date().toLocaleTimeString();
-    document.getElementById("status").textContent = `Pozisyon: ${state.positions.length} • İşlem: ${state.transactions.length}`;
+    document.getElementById("last-sync").textContent = "Synced: " + new Date().toLocaleTimeString();
+    document.getElementById("status").textContent = `${state.positions.length} positions • ${state.transactions.length} transactions`;
   } catch (e) {
-    toast("Yükleme hatası: " + e.message, "bad");
-    document.getElementById("status").textContent = "HATA";
+    toast("Load error: " + e.message, "bad");
+    document.getElementById("status").textContent = "ERROR";
   }
 }
 
@@ -271,7 +271,7 @@ function renderTransactions() {
 
 function refreshSellDropdown() {
   const sel = document.getElementById("sell-ticker");
-  sel.innerHTML = '<option value="">— seç —</option>';
+  sel.innerHTML = '<option value="">— select —</option>';
   for (const p of state.positions) {
     const opt = document.createElement("option");
     opt.value = p.ticker;
@@ -315,7 +315,7 @@ function setupTickerSearch() {
     const results = searchTickers(q);
     dropdown.innerHTML = "";
     if (results.length === 0) {
-      dropdown.innerHTML = '<div class="dropdown-item muted">Eşleşme yok</div>';
+      dropdown.innerHTML = '<div class="dropdown-item muted">No match</div>';
     } else {
       for (const r of results) {
         const item = document.createElement("div");
@@ -348,7 +348,7 @@ function updateBuySummary() {
   const sum = document.getElementById("buy-summary");
   if (t && s && p) {
     const total = s * p;
-    sum.textContent = `Toplam: ${fmtMoney(total)} • Cash sonrası: ${fmtMoney(state.cash.cash - total)}`;
+    sum.textContent = `Total: ${fmtMoney(total)} • Cash after: ${fmtMoney(state.cash.cash - total)}`;
   } else {
     sum.textContent = "";
   }
@@ -363,7 +363,7 @@ function updateSellSummary() {
     const total = s * p;
     const pos = state.positions.find(x => x.ticker === t);
     const remaining = pos ? (pos.shares - s).toFixed(4) : "?";
-    sum.textContent = `Tahsilat: ${fmtMoney(total)} • Kalan: ${remaining} shares`;
+    sum.textContent = `Proceeds: ${fmtMoney(total)} • Remaining: ${remaining} shares`;
   } else {
     sum.textContent = "";
   }
@@ -389,8 +389,8 @@ function todayIso() {
 async function submitCash() {
   const amt = parseFloat(document.getElementById("cash-amount").value);
   const date = document.getElementById("cash-date").value || todayIso();
-  if (!amt || amt <= 0) { toast("Geçerli bir tutar gir", "bad"); return; }
-  if (!getToken()) { showTokenSetup(true); toast("Önce token ekle", "bad"); return; }
+  if (!amt || amt <= 0) { toast("Enter a valid amount", "bad"); return; }
+  if (!getToken()) { showTokenSetup(true); toast("Add token first", "bad"); return; }
 
   const newCash = { ...state.cash };
   newCash.cash = (newCash.cash || 0) + amt;
@@ -424,11 +424,11 @@ async function submitCash() {
     document.getElementById("cash-amount").value = "";
     renderPortfolio();
     renderTransactions();
-    toast(`+${fmtMoney(amt)} eklendi`, "good");
+    toast(`+${fmtMoney(amt)} added`, "good");
   } catch (e) {
-    toast("Commit hatası: " + e.message, "bad");
+    toast("Commit error: " + e.message, "bad");
   } finally {
-    btn.disabled = false; btn.textContent = "Nakiti Ekle";
+    btn.disabled = false; btn.textContent = "Add Cash";
   }
 }
 
@@ -437,8 +437,8 @@ async function submitBuy() {
   const shares = parseFloat(document.getElementById("buy-shares").value);
   const price = parseFloat(document.getElementById("buy-price").value);
   const date = document.getElementById("buy-date").value || todayIso();
-  if (!tk || !shares || !price) { toast("Tüm alanları doldur", "bad"); return; }
-  if (!getToken()) { showTokenSetup(true); toast("Önce token ekle", "bad"); return; }
+  if (!tk || !shares || !price) { toast("Fill all fields", "bad"); return; }
+  if (!getToken()) { showTokenSetup(true); toast("Add token first", "bad"); return; }
   const amount = shares * price;
 
   // Update positions
@@ -505,9 +505,9 @@ async function submitBuy() {
     updateBuySummary();
     toast(`BUY ${tk}: ${shares} × ${fmtMoney(price)} = ${fmtMoney(amount)}`, "good");
   } catch (e) {
-    toast("Commit hatası: " + e.message, "bad");
+    toast("Commit error: " + e.message, "bad");
   } finally {
-    btn.disabled = false; btn.textContent = "Alımı Kaydet";
+    btn.disabled = false; btn.textContent = "Record Buy";
   }
 }
 
@@ -516,11 +516,11 @@ async function submitSell() {
   const shares = parseFloat(document.getElementById("sell-shares").value);
   const price = parseFloat(document.getElementById("sell-price").value);
   const date = document.getElementById("sell-date").value || todayIso();
-  if (!tk || !shares || !price) { toast("Tüm alanları doldur", "bad"); return; }
-  if (!getToken()) { showTokenSetup(true); toast("Önce token ekle", "bad"); return; }
+  if (!tk || !shares || !price) { toast("Fill all fields", "bad"); return; }
+  if (!getToken()) { showTokenSetup(true); toast("Add token first", "bad"); return; }
 
   const pos = state.positions.find(p => p.ticker === tk);
-  if (!pos || pos.shares < shares) { toast("Yetersiz pozisyon", "bad"); return; }
+  if (!pos || pos.shares < shares) { toast("Not enough shares in position", "bad"); return; }
 
   const proceeds = shares * price;
   const cost_per_share = pos.cost_basis / pos.shares;
@@ -580,9 +580,9 @@ async function submitSell() {
     updateSellSummary();
     toast(`SELL ${tk}: ${shares} × ${fmtMoney(price)} = ${fmtMoney(proceeds)}`, "good");
   } catch (e) {
-    toast("Commit hatası: " + e.message, "bad");
+    toast("Commit error: " + e.message, "bad");
   } finally {
-    btn.disabled = false; btn.textContent = "Satışı Kaydet";
+    btn.disabled = false; btn.textContent = "Record Sell";
   }
 }
 
@@ -642,7 +642,7 @@ function parseImportCsv(text) {
 function previewCsv(rows) {
   const div = document.getElementById("csv-preview");
   if (!rows || rows.length === 0) {
-    div.innerHTML = '<p class="muted">İşlenebilir satır bulunamadı.</p>';
+    div.innerHTML = '<p class="muted">No processable rows found.</p>';
     document.getElementById("csv-submit").classList.add("hidden");
     return;
   }
@@ -664,7 +664,7 @@ function previewCsv(rows) {
 
 async function commitCsvImport() {
   if (!state.pendingCsvRows || state.pendingCsvRows.length === 0) return;
-  if (!getToken()) { showTokenSetup(true); toast("Önce token ekle", "bad"); return; }
+  if (!getToken()) { showTokenSetup(true); toast("Add token first", "bad"); return; }
 
   const newPositions = [...state.positions];
   const newTxns = [...state.transactions];
@@ -743,11 +743,11 @@ async function commitCsvImport() {
     renderPortfolio();
     renderTransactions();
     refreshSellDropdown();
-    toast(`${state.pendingCsvRows ? state.pendingCsvRows.length : "?"} işlem commit edildi`, "good");
+    toast(`${state.pendingCsvRows ? state.pendingCsvRows.length : "?"} transactions committed`, "good");
   } catch (e) {
-    toast("Commit hatası: " + e.message, "bad");
+    toast("Commit error: " + e.message, "bad");
   } finally {
-    btn.disabled = false; btn.textContent = "Onayla ve Commit Et";
+    btn.disabled = false; btn.textContent = "Confirm and Commit";
   }
 }
 
@@ -759,7 +759,7 @@ async function init() {
 
   if (!getToken()) {
     showTokenSetup(true);
-    document.getElementById("status").textContent = "Token bekleniyor (private repo)";
+    document.getElementById("status").textContent = "Waiting for token (private repo)";
   } else {
     await loadState();
   }
@@ -771,13 +771,13 @@ async function init() {
     saveToken(t);
     showTokenSetup(false);
     document.getElementById("token-input").value = "";
-    toast("Token kaydedildi, veri çekiliyor...", "good");
+    toast("Token saved, loading data...", "good");
     await loadState();
   });
   document.getElementById("logout-btn").addEventListener("click", () => {
     clearToken();
     showTokenSetup(true);
-    toast("Token silindi");
+    toast("Token cleared");
   });
   document.getElementById("refresh-btn").addEventListener("click", loadState);
 

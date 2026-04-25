@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="tr">
+<html lang="en">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -10,36 +10,38 @@
 <div id="app">
   <header>
     <h1>📊 Wallstreet Portfolio</h1>
-    <div id="status">Yükleniyor...</div>
+    <div id="status">Loading...</div>
   </header>
 
   <!-- Token setup section (shown only if no PAT in localStorage) -->
   <section id="token-setup" class="card hidden">
-    <h2>Önce GitHub Token gerekli</h2>
+    <h2>GitHub Token Required</h2>
     <p>
+      Go to
       <a href="https://github.com/settings/tokens/new" target="_blank">
         github.com/settings/tokens/new
-      </a>'a git, <strong>Classic PAT</strong> oluştur:
+      </a>
+      and create a <strong>Classic PAT</strong>:
     </p>
     <ul>
       <li>Note: <code>wallstreet-ui</code></li>
       <li>Expiration: <strong>No expiration</strong> (set-and-forget)</li>
-      <li>Scopes: sadece <code>repo</code> kutusunu işaretle</li>
-      <li>Generate → kopyala → aşağı yapıştır</li>
+      <li>Scopes: tick the <code>repo</code> checkbox</li>
+      <li>Generate → copy → paste below</li>
     </ul>
     <input type="password" id="token-input" placeholder="ghp_..." autocomplete="off">
-    <button id="token-save">Kaydet</button>
-    <p class="muted">Token sadece bu tarayıcının localStorage'ında saklanır. Hiçbir yere gönderilmez (sadece api.github.com'a senin commitlerini yapmak için).</p>
+    <button id="token-save">Save</button>
+    <p class="muted">Token is stored only in this browser's localStorage. It is never sent anywhere except api.github.com (to commit your changes on your behalf).</p>
   </section>
 
   <!-- Portfolio overview -->
   <section id="portfolio" class="card">
     <div class="card-header">
-      <h2>Portföy</h2>
+      <h2>Portfolio</h2>
       <div class="stats">
         <span>Cash: <strong id="cash-balance">—</strong></span>
-        <span>Toplam Değer: <strong id="total-value">—</strong></span>
-        <span>Yatırılan: <strong id="total-contributed">—</strong></span>
+        <span>Total value: <strong id="total-value">—</strong></span>
+        <span>Contributed: <strong id="total-contributed">—</strong></span>
       </div>
     </div>
     <table id="positions-table">
@@ -47,8 +49,8 @@
         <tr>
           <th>Ticker</th>
           <th>Shares</th>
-          <th>Cost Basis</th>
-          <th>First Buy</th>
+          <th>Cost basis</th>
+          <th>First buy</th>
           <th>Sector</th>
         </tr>
       </thead>
@@ -59,103 +61,103 @@
   <!-- Action tabs -->
   <section class="card">
     <div class="tabs">
-      <button class="tab-btn active" data-tab="cash">💰 Cash Ekle</button>
-      <button class="tab-btn" data-tab="buy">🛒 Hisse Al</button>
-      <button class="tab-btn" data-tab="sell">📤 Hisse Sat</button>
+      <button class="tab-btn active" data-tab="cash">💰 Add Cash</button>
+      <button class="tab-btn" data-tab="buy">🛒 Buy</button>
+      <button class="tab-btn" data-tab="sell">📤 Sell</button>
       <button class="tab-btn" data-tab="csv">📁 CSV Import</button>
     </div>
 
     <!-- Cash tab -->
     <div class="tab-content active" data-tab="cash">
-      <h3>Nakit Yatır</h3>
+      <h3>Deposit Cash</h3>
       <div class="form-row">
-        <label>Tutar (USD):
+        <label>Amount (USD):
           <input type="number" id="cash-amount" placeholder="1000" step="0.01">
         </label>
-        <label>Tarih:
+        <label>Date:
           <input type="date" id="cash-date">
         </label>
       </div>
-      <button id="cash-submit" class="primary">Nakiti Ekle</button>
-      <p class="muted">Bu, <code>cash.json</code>'a tutarı ekler ve <code>transactions.csv</code>'a "DEPOSIT" satırı yazar.</p>
+      <button id="cash-submit" class="primary">Add Cash</button>
+      <p class="muted">Adds the amount to <code>cash.json</code> and writes a "DEPOSIT" row to <code>transactions.csv</code>.</p>
     </div>
 
     <!-- Buy tab -->
     <div class="tab-content" data-tab="buy">
-      <h3>Hisse Alımı</h3>
+      <h3>Buy</h3>
       <div class="form-row">
         <label class="search-wrapper">
-          Ticker (ara):
-          <input type="text" id="buy-ticker" placeholder="aapl yaz, Apple çıkar..." autocomplete="off">
+          Ticker (search):
+          <input type="text" id="buy-ticker" placeholder="type 'aapl', pick Apple..." autocomplete="off">
           <div id="ticker-results" class="dropdown hidden"></div>
         </label>
       </div>
       <div class="form-row">
-        <label>Hisse adedi:
+        <label>Shares:
           <input type="number" id="buy-shares" placeholder="2.5" step="0.0001">
         </label>
-        <label>Fiyat (USD):
+        <label>Price (USD):
           <input type="number" id="buy-price" placeholder="180.50" step="0.01">
         </label>
-        <label>Tarih:
+        <label>Date:
           <input type="date" id="buy-date">
         </label>
       </div>
       <div id="buy-summary" class="muted"></div>
-      <button id="buy-submit" class="primary">Alımı Kaydet</button>
+      <button id="buy-submit" class="primary">Record Buy</button>
     </div>
 
     <!-- Sell tab -->
     <div class="tab-content" data-tab="sell">
-      <h3>Hisse Satışı</h3>
+      <h3>Sell</h3>
       <div class="form-row">
-        <label>Pozisyon:
+        <label>Position:
           <select id="sell-ticker">
-            <option value="">— seç —</option>
+            <option value="">— select —</option>
           </select>
         </label>
       </div>
       <div class="form-row">
-        <label>Satılan adet:
+        <label>Shares sold:
           <input type="number" id="sell-shares" step="0.0001">
         </label>
-        <label>Fiyat (USD):
+        <label>Price (USD):
           <input type="number" id="sell-price" step="0.01">
         </label>
-        <label>Tarih:
+        <label>Date:
           <input type="date" id="sell-date">
         </label>
       </div>
       <div id="sell-summary" class="muted"></div>
-      <button id="sell-submit" class="primary">Satışı Kaydet</button>
+      <button id="sell-submit" class="primary">Record Sell</button>
     </div>
 
     <!-- CSV Import tab -->
     <div class="tab-content" data-tab="csv">
       <h3>CSV Import</h3>
       <p class="muted">
-        T212 ya da Parqet export'unu yükle. Tip: BUY/SELL satırları otomatik ayrılır.
-        Kolon isimleri esnek; "Action/Ticker/Shares/Price/Date" varyantları desteklenir.
+        Upload a T212 or Parqet export. BUY/SELL rows are auto-detected.
+        Column names are flexible; "Action / Ticker / Shares / Price / Date" variants are supported.
       </p>
       <input type="file" id="csv-file" accept=".csv">
       <div id="csv-preview"></div>
-      <button id="csv-submit" class="primary hidden">Onayla ve Commit Et</button>
+      <button id="csv-submit" class="primary hidden">Confirm and Commit</button>
     </div>
   </section>
 
   <section id="recent-transactions" class="card">
-    <h2>Son İşlemler</h2>
+    <h2>Recent Transactions</h2>
     <table id="transactions-table">
       <thead>
-        <tr><th>Tarih</th><th>Aksiyon</th><th>Ticker</th><th>Shares</th><th>Fiyat</th><th>Tutar</th></tr>
+        <tr><th>Date</th><th>Action</th><th>Ticker</th><th>Shares</th><th>Price</th><th>Amount</th></tr>
       </thead>
       <tbody></tbody>
     </table>
   </section>
 
   <footer>
-    <button id="refresh-btn">↻ Yenile</button>
-    <button id="logout-btn" class="muted-btn">Token Sil</button>
+    <button id="refresh-btn">↻ Refresh</button>
+    <button id="logout-btn" class="muted-btn">Clear Token</button>
     <span id="last-sync" class="muted"></span>
   </footer>
 </div>
