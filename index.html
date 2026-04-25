@@ -17,18 +17,19 @@
   <section id="token-setup" class="card hidden">
     <h2>Önce GitHub Token gerekli</h2>
     <p>
-      <a href="https://github.com/settings/personal-access-tokens/new" target="_blank">
-        github.com/settings/personal-access-tokens/new
-      </a>'a git, <strong>fine-grained PAT</strong> oluştur:
+      <a href="https://github.com/settings/tokens/new" target="_blank">
+        github.com/settings/tokens/new
+      </a>'a git, <strong>Classic PAT</strong> oluştur:
     </p>
     <ul>
-      <li>Repository access → only <code>wallstreet-state</code></li>
-      <li>Permissions → Contents: <strong>Read and write</strong></li>
-      <li>Süre: 90 gün (sonra yenilersin)</li>
+      <li>Note: <code>wallstreet-ui</code></li>
+      <li>Expiration: <strong>No expiration</strong> (set-and-forget)</li>
+      <li>Scopes: sadece <code>repo</code> kutusunu işaretle</li>
+      <li>Generate → kopyala → aşağı yapıştır</li>
     </ul>
-    <input type="password" id="token-input" placeholder="github_pat_..." autocomplete="off">
+    <input type="password" id="token-input" placeholder="ghp_..." autocomplete="off">
     <button id="token-save">Kaydet</button>
-    <p class="muted">Token sadece tarayıcında saklanır (localStorage). Hiçbir yere gönderilmez.</p>
+    <p class="muted">Token sadece bu tarayıcının localStorage'ında saklanır. Hiçbir yere gönderilmez (sadece api.github.com'a senin commitlerini yapmak için).</p>
   </section>
 
   <!-- Portfolio overview -->
