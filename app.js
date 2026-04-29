@@ -734,7 +734,13 @@ const HEADER_ALIASES = {
 };
 
 function normalizeHeader(h) {
-  const hl = h.toLowerCase().replace(/[^a-z0-9_]/g, "_").replace(/^_+|_+$/g, "");
+  // Lowercase, replace non-alphanumeric with _, COLLAPSE consecutive _s, trim.
+  // Without the collapse step, "Price / share" became "price___share" (three
+  // underscores from "/", " ", and the gap) and never matched aliases.
+  const hl = h.toLowerCase()
+    .replace(/[^a-z0-9_]/g, "_")
+    .replace(/_+/g, "_")
+    .replace(/^_+|_+$/g, "");
   for (const [canonical, aliases] of Object.entries(HEADER_ALIASES)) {
     if (aliases.includes(hl)) return canonical;
   }
