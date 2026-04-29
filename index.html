@@ -34,10 +34,9 @@
     <p class="muted">Token is stored only in this browser's localStorage. It is never sent anywhere except api.github.com (to commit your changes on your behalf).</p>
   </section>
 
-  <!-- Strategy selector pills -->
+  <!-- Strategy selector pills (DCF removed 2026-04-29 — only GPM is active) -->
   <nav id="strategy-pills" class="strategy-pills">
     <button class="pill active" data-strategy="all">📊 All</button>
-    <button class="pill pill-dcf" data-strategy="dcf">💎 DCF</button>
     <button class="pill pill-gpm" data-strategy="gpm">📈 GPM</button>
   </nav>
 
@@ -46,7 +45,6 @@
     <div class="card-header">
       <h2 id="portfolio-title">Portfolio</h2>
       <div class="stats" id="strategy-stats">
-        <span class="stat-pill"><span class="dot dot-dcf"></span> DCF: <strong id="dcf-value">—</strong></span>
         <span class="stat-pill"><span class="dot dot-gpm"></span> GPM: <strong id="gpm-value">—</strong></span>
         <span class="stat-pill total">Total: <strong id="total-value">—</strong></span>
       </div>
@@ -80,21 +78,6 @@
     <!-- Buy tab -->
     <div class="tab-content active" data-tab="buy">
       <h3>Buy</h3>
-      <div class="form-row">
-        <fieldset class="strategy-fieldset">
-          <legend>Strategy</legend>
-          <label class="radio-label">
-            <input type="radio" name="buy-strategy" value="dcf" checked>
-            <span class="strategy-tag tag-dcf">💎 DCF</span>
-            <small>Quarterly fair-value</small>
-          </label>
-          <label class="radio-label">
-            <input type="radio" name="buy-strategy" value="gpm">
-            <span class="strategy-tag tag-gpm">📈 GPM</span>
-            <small>Monthly margin-accel</small>
-          </label>
-        </fieldset>
-      </div>
       <div class="form-row">
         <label class="search-wrapper">
           Ticker (search):
@@ -145,21 +128,8 @@
     <!-- CSV Import tab -->
     <div class="tab-content" data-tab="csv">
       <h3>CSV Import</h3>
-      <div class="form-row">
-        <fieldset class="strategy-fieldset">
-          <legend>Tag imported buys/sells as</legend>
-          <label class="radio-label">
-            <input type="radio" name="csv-strategy" value="dcf" checked>
-            <span class="strategy-tag tag-dcf">💎 DCF</span>
-          </label>
-          <label class="radio-label">
-            <input type="radio" name="csv-strategy" value="gpm">
-            <span class="strategy-tag tag-gpm">📈 GPM</span>
-          </label>
-        </fieldset>
-      </div>
       <p class="muted">
-        Upload a T212 or Parqet export. BUY/SELL rows are auto-detected and tagged with the selected strategy.
+        Upload a T212 or Parqet export. BUY/SELL rows are auto-detected and tagged as <strong>GPM</strong>.
         Column names are flexible; "Action / Ticker / Shares / Price / Date" variants are supported.
       </p>
       <input type="file" id="csv-file" accept=".csv">

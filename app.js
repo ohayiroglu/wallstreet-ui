@@ -1,6 +1,6 @@
 // Wallstreet Portfolio Manager — static GitHub Pages app
 // Reads/writes positions.csv, transactions.csv, cash.json on github.com/ohayiroglu/wallstreet-state via the GitHub API.
-// Tracks two parallel strategies: DCF (quarterly fair-value) and GPM (monthly margin-acceleration).
+// GPM strategy is the active sleeve (monthly margin-acceleration); DCF was retired 2026-04-29.
 
 const REPO = "ohayiroglu/wallstreet-state";
 const BRANCH = "main";
@@ -49,20 +49,20 @@ function showTokenSetup(visible) {
 }
 
 // ---------- Strategy helpers ----------
+// DCF was retired from the UI on 2026-04-29 — only GPM is actively used.
+// Legacy DCF rows (if any) still render with their badge, but new entries
+// always default to "gpm".
 function normalizeStrategy(s) {
-  // Backwards compat: empty/missing strategy → "dcf" (existing rows pre-multi-strategy era)
   const v = (s || "").toString().trim().toLowerCase();
-  return (v === "gpm") ? "gpm" : "dcf";
+  return (v === "dcf") ? "dcf" : "gpm";
 }
 
 function buyStrategySelected() {
-  const r = document.querySelector("input[name='buy-strategy']:checked");
-  return r ? r.value : "dcf";
+  return "gpm";
 }
 
 function csvStrategySelected() {
-  const r = document.querySelector("input[name='csv-strategy']:checked");
-  return r ? r.value : "dcf";
+  return "gpm";
 }
 
 function setActiveStrategy(s) {
@@ -178,10 +178,9 @@ async function loadState() {
     renderTransactions();
     refreshSellDropdown();
     document.getElementById("last-sync").textContent = "Synced: " + new Date().toLocaleTimeString();
-    const dcfCount = state.positions.filter(p => p.strategy === "dcf").length;
     const gpmCount = state.positions.filter(p => p.strategy === "gpm").length;
     document.getElementById("status").textContent =
-      `${dcfCount} DCF • ${gpmCount} GPM • ${state.transactions.length} transactions`;
+      `${gpmCount} GPM • ${state.transactions.length} transactions`;
   } catch (e) {
     toast("Load error: " + e.message, "bad");
     document.getElementById("status").textContent = "ERROR";
@@ -222,7 +221,7 @@ function serializePositions(positions) {
       cost_basis: p.cost_basis.toFixed(2),
       first_buy_date: p.first_buy_date,
       sector: p.sector,
-      strategy: p.strategy || "dcf",
+      strategy: p.strategy || "gpm",
     })),
     ["ticker", "shares", "cost_basis", "first_buy_date", "sector", "strategy"]
   );
@@ -237,7 +236,7 @@ function serializeTransactions(txns) {
       shares: t.shares ? t.shares.toFixed(6).replace(/\.?0+$/, "") : "0",
       price: t.price ? t.price.toFixed(4).replace(/\.?0+$/, "") : "0",
       amount: (t.amount || 0).toFixed(2),
-      strategy: t.action === "DEPOSIT" ? "" : (t.strategy || "dcf"),
+      strategy: t.action === "DEPOSIT" ? "" : (t.strategy || "gpm"),
     })),
     ["date", "action", "ticker", "shares", "price", "amount", "strategy"]
   );
@@ -284,11 +283,9 @@ function renderPortfolio() {
     emptyEl.classList.add("hidden");
   }
 
-  // Stats: split by strategy (cash & contributed removed from UI 2026-04-29)
-  const dcfCost = state.positions.filter(p => p.strategy === "dcf").reduce((s, p) => s + p.cost_basis, 0);
+  // Stats: cash & DCF removed from UI 2026-04-29 (GPM is the only active strategy)
   const gpmCost = state.positions.filter(p => p.strategy === "gpm").reduce((s, p) => s + p.cost_basis, 0);
-  const totalCost = dcfCost + gpmCost;
-  document.getElementById("dcf-value").textContent = fmtMoney(dcfCost);
+  const totalCost = state.positions.reduce((s, p) => s + p.cost_basis, 0);
   document.getElementById("gpm-value").textContent = fmtMoney(gpmCost);
   document.getElementById("total-value").textContent = fmtMoney(totalCost);
 
@@ -626,7 +623,7 @@ function previewCsv(rows) {
     document.getElementById("csv-submit").classList.add("hidden");
     return;
   }
-  const stratLabel = (rows[0] && rows[0].strategy ? rows[0].strategy.toUpperCase() : "DCF");
+  const stratLabel = (rows[0] && rows[0].strategy ? rows[0].strategy.toUpperCase() : "GPM");
   div.innerHTML = `<p class="muted">Tagging all rows as <strong>${stratLabel}</strong>.</p>` +
     '<div class="preview-row header"><div>Date</div><div>Action</div><div>Ticker</div><div>Shares</div><div>Price</div><div>Amount</div></div>';
   for (const r of rows) {
