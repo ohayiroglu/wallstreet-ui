@@ -664,6 +664,9 @@ function renderPortfolio() {
   tbody.innerHTML = "";
   const sorted = [...filteredPositions()].sort((a, b) => b.cost_basis - a.cost_basis);
 
+  // Currency symbol for this view (auto-detected from active portfolio).
+  const sym = curSym(activeCurrency());
+
   let totalCost = 0, totalValue = 0;
 
   for (const p of sorted) {
@@ -682,9 +685,9 @@ function renderPortfolio() {
       const lo = live.w52Low, hi = live.w52High, px = live.price;
       const pct = Math.max(0, Math.min(100, ((px - lo) / (hi - lo)) * 100));
       rangeCell = `
-        <span class="muted" style="font-size:11px;">$${fmtNum(lo)}</span>
+        <span class="muted" style="font-size:11px;">${sym}${fmtNum(lo)}</span>
         <span class="range-bar"><span class="marker" style="left:${pct.toFixed(0)}%"></span></span>
-        <span class="muted" style="font-size:11px;">$${fmtNum(hi)}</span>`;
+        <span class="muted" style="font-size:11px;">${sym}${fmtNum(hi)}</span>`;
     }
 
     // Day delta cell
@@ -699,7 +702,7 @@ function renderPortfolio() {
     if (pl !== null) {
       const cls = pl > 0 ? "pl-pos" : pl < 0 ? "pl-neg" : "pl-zero";
       const pctTxt = plPct !== null ? `(${plPct >= 0 ? "+" : ""}${fmtNum(plPct, 1)}%)` : "";
-      plCell = `<span class="${cls}">${pl >= 0 ? "+" : ""}$${fmtNum(Math.abs(pl), 0)} <small>${pctTxt}</small></span>`;
+      plCell = `<span class="${cls}">${pl >= 0 ? "+" : ""}${sym}${fmtNum(Math.abs(pl), 0)} <small>${pctTxt}</small></span>`;
     }
 
     const row = document.createElement("tr");
@@ -709,11 +712,11 @@ function renderPortfolio() {
         <div class="muted" style="font-size:11px;">${p.first_buy_date}</div></td>
       <td class="muted" style="font-size:12px;">${p.sector || ""}</td>
       <td class="num">${p.shares.toFixed(4).replace(/\.?0+$/, "")}</td>
-      <td class="num">$${fmtNum(avgCost)}</td>
-      <td class="num">${live ? "$" + fmtNum(live.price) : "<span class='muted'>—</span>"}</td>
+      <td class="num">${sym}${fmtNum(avgCost)}</td>
+      <td class="num">${live ? sym + fmtNum(live.price) : "<span class='muted'>—</span>"}</td>
       <td class="num">${dayCell}</td>
       <td class="num">${rangeCell}</td>
-      <td class="num">${value !== null ? "$" + fmtNum(value, 0) : "<span class='muted'>—</span>"}</td>
+      <td class="num">${value !== null ? sym + fmtNum(value, 0) : "<span class='muted'>—</span>"}</td>
       <td class="num">${plCell}</td>
       <td class="actions">
         <button class="row-action" data-act="edit-pos" data-ticker="${p.ticker}" title="Edit">✏️</button>
@@ -732,12 +735,12 @@ function renderPortfolio() {
 
   const totalPL = totalValue - totalCost;
   const totalPLPct = totalCost > 0 ? (totalPL / totalCost) * 100 : 0;
-  document.getElementById("total-cost").textContent = "$" + fmtNum(totalCost, 0);
-  document.getElementById("total-value").textContent = totalValue > 0 ? "$" + fmtNum(totalValue, 0) : "—";
+  document.getElementById("total-cost").textContent = sym + fmtNum(totalCost, 0);
+  document.getElementById("total-value").textContent = totalValue > 0 ? sym + fmtNum(totalValue, 0) : "—";
   const plEl = document.getElementById("total-pl");
   if (totalValue > 0) {
     const sign = totalPL >= 0 ? "+" : "";
-    plEl.innerHTML = `<span class="${totalPL >= 0 ? "pl-pos" : "pl-neg"}">${sign}$${fmtNum(Math.abs(totalPL), 0)} (${sign}${fmtNum(totalPLPct, 1)}%)</span>`;
+    plEl.innerHTML = `<span class="${totalPL >= 0 ? "pl-pos" : "pl-neg"}">${sign}${sym}${fmtNum(Math.abs(totalPL), 0)} (${sign}${fmtNum(totalPLPct, 1)}%)</span>`;
   } else {
     plEl.textContent = "—";
   }
@@ -746,6 +749,7 @@ function renderPortfolio() {
 function renderTransactions() {
   const tbody = document.querySelector("#transactions-table tbody");
   tbody.innerHTML = "";
+  const sym = curSym(activeCurrency());
   // Index in state.transactions stays as the stable identifier across filters
   const all = state.transactions.map((t, i) => ({ ...t, _idx: i }));
   const visible = (!state.activePortfolio || state.activePortfolio === "__all__")
@@ -763,8 +767,8 @@ function renderTransactions() {
       <td style="color:${actionColor}">${t.action}</td>
       <td>${t.ticker || ""}</td>
       <td class="num">${t.shares ? t.shares.toFixed(4).replace(/\.?0+$/, "") : ""}</td>
-      <td class="num">${t.price ? "$" + fmtNum(t.price) : ""}</td>
-      <td class="num">$${fmtNum(t.amount, 0)}</td>
+      <td class="num">${t.price ? sym + fmtNum(t.price) : ""}</td>
+      <td class="num">${sym}${fmtNum(t.amount, 0)}</td>
       <td class="actions">
         <button class="row-action" data-act="edit-txn" data-idx="${t._idx}" title="Edit">✏️</button>
         <button class="row-action danger" data-act="del-txn" data-idx="${t._idx}" title="Delete">🗑️</button>
