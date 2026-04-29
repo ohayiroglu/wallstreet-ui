@@ -253,6 +253,8 @@ function setupPortfolioBar() {
     }
     document.getElementById("renameport-old").value = cur;
     document.getElementById("renameport-new").value = cur;
+    document.getElementById("renameport-currency").value =
+      state.portfolioMeta?.[cur]?.currency || "USD";
     document.getElementById("renameport-modal").classList.remove("hidden");
     setTimeout(() => {
       const inp = document.getElementById("renameport-new");
@@ -299,21 +301,38 @@ function setupPortfolioBar() {
 async function renamePortfolio() {
   const oldName = document.getElementById("renameport-old").value;
   const newName = (document.getElementById("renameport-new").value || "").trim();
+  const newCurrency = document.getElementById("renameport-currency").value || "USD";
+  const oldCurrency = state.portfolioMeta?.[oldName]?.currency || "USD";
+
   if (!isValidPortfolioName(newName)) {
     toast("Letters / digits / dashes / underscores (max 40 chars, must start with letter/digit)", "bad");
     return;
   }
-  if (newName === oldName) {
-    toast("New name is the same as the old one", "bad");
+
+  const renameNeeded = newName !== oldName;
+  const currencyChanged = newCurrency !== oldCurrency;
+  if (!renameNeeded && !currencyChanged) {
+    toast("Nothing to change — same name and same currency", "bad");
     return;
   }
-  if (state.portfolios.includes(newName)) {
+  if (renameNeeded && state.portfolios.includes(newName)) {
     toast(`"${newName}" already exists`, "bad");
     return;
   }
-  if (!getToken()) { showTokenSetup(true); toast("Add token first", "bad"); return; }
 
-  // Update positions + transactions in-memory
+  // Currency-only change: just update localStorage, no commit needed
+  if (!renameNeeded && currencyChanged) {
+    state.portfolioMeta = state.portfolioMeta || {};
+    state.portfolioMeta[oldName] = { ...(state.portfolioMeta[oldName] || {}), currency: newCurrency };
+    localStorage.setItem("ws_portfolio_meta", JSON.stringify(state.portfolioMeta));
+    document.getElementById("renameport-modal").classList.add("hidden");
+    setActivePortfolio(oldName);
+    toast(`Currency for "${oldName}" → ${newCurrency}`, "good");
+    return;
+  }
+
+  // Rename (with optional currency change in the same step)
+  if (!getToken()) { showTokenSetup(true); toast("Add token first", "bad"); return; }
   const newPositions = state.positions.map(p =>
     (p.strategy === oldName) ? { ...p, strategy: newName } : p);
   const newTxns = state.transactions.map(t =>
@@ -332,17 +351,15 @@ async function renamePortfolio() {
     state.positions = newPositions;
     state.transactions = newTxns;
 
-    // Move portfolioMeta entry
-    if (state.portfolioMeta?.[oldName]) {
-      state.portfolioMeta[newName] = state.portfolioMeta[oldName];
-      delete state.portfolioMeta[oldName];
-      localStorage.setItem("ws_portfolio_meta", JSON.stringify(state.portfolioMeta));
-    }
+    state.portfolioMeta = state.portfolioMeta || {};
+    state.portfolioMeta[newName] = { ...(state.portfolioMeta[oldName] || {}), currency: newCurrency };
+    if (oldName !== newName) delete state.portfolioMeta[oldName];
+    localStorage.setItem("ws_portfolio_meta", JSON.stringify(state.portfolioMeta));
 
     rebuildPortfolioList();
     document.getElementById("renameport-modal").classList.add("hidden");
     setActivePortfolio(newName);
-    toast(`Renamed "${oldName}" → "${newName}" (${nPos} pos, ${nTxn} txn updated)`, "good");
+    toast(`Renamed "${oldName}" → "${newName}" (${nPos} pos, ${nTxn} txn, ${newCurrency})`, "good");
   } catch (e) {
     toast("Rename failed: " + e.message, "bad");
   }

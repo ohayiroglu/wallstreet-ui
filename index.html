@@ -216,12 +216,12 @@
     </div>
   </div>
 
-  <!-- Rename portfolio modal -->
+  <!-- Edit portfolio modal (rename + currency) -->
   <div id="renameport-modal" class="modal hidden">
     <div class="modal-backdrop" data-act="renameport-cancel"></div>
     <div class="modal-card" style="width:480px;">
-      <h2>✏️ Rename portfolio</h2>
-      <p class="muted">Renaming updates all positions and transactions tagged under this portfolio. Two commits will be pushed to <code>wallstreet-state</code>.</p>
+      <h2>✏️ Edit portfolio</h2>
+      <p class="muted">Rename updates all CSV rows tagged under this portfolio (one commit). Currency change is local to this device.</p>
       <div class="form-row">
         <label>Old name:
           <input type="text" id="renameport-old" disabled>
@@ -229,11 +229,17 @@
         <label>New name:
           <input type="text" id="renameport-new" placeholder="e.g. Cansu_TradeRepublic" autocomplete="off" maxlength="40">
         </label>
+        <label>Currency:
+          <select id="renameport-currency">
+            <option value="USD">$ USD</option>
+            <option value="EUR">€ EUR</option>
+          </select>
+        </label>
       </div>
-      <p class="muted" style="font-size:12px;margin-top:0;">Letters / digits / dashes / underscores. Currency is preserved.</p>
+      <p class="muted" style="font-size:12px;margin-top:0;">Letters / digits / dashes / underscores. Currency only changes display formatting (positions/cost/value are stored as raw numbers).</p>
       <div class="modal-actions">
         <button class="muted-btn" data-act="renameport-cancel">Cancel</button>
-        <button class="primary" data-act="renameport-save">Rename</button>
+        <button class="primary" data-act="renameport-save">Save</button>
       </div>
     </div>
   </div>
