@@ -402,6 +402,89 @@ footer {
 .preview-row.header { color: var(--muted); font-weight: 600; }
 .preview-row.error { color: var(--bad); }
 
+/* Modal (Parqet export wizard) */
+.modal {
+  position: fixed; inset: 0;
+  z-index: 200;
+  display: flex; align-items: center; justify-content: center;
+  padding: 20px;
+}
+.modal.hidden { display: none; }
+.modal-backdrop {
+  position: absolute; inset: 0;
+  background: rgba(0, 0, 0, 0.65);
+  backdrop-filter: blur(2px);
+  cursor: pointer;
+}
+.modal-card {
+  position: relative;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 28px 28px 24px;
+  width: 720px; max-width: 100%;
+  max-height: 88vh; overflow-y: auto;
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.5);
+}
+.modal-card h2 { margin: 0 0 6px 0; font-size: 18px; font-weight: 600; }
+.modal-card p { margin: 0 0 18px 0; }
+.modal-step.hidden { display: none; }
+.modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 20px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
+}
+.modal-actions button { padding: 8px 18px; }
+
+.export-list {
+  max-height: 50vh;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+.export-row {
+  display: grid;
+  grid-template-columns: 32px 100px 60px minmax(140px, 1fr) 80px 90px 90px;
+  gap: 10px;
+  align-items: center;
+  padding: 10px 14px;
+  font-size: 13px;
+  border-bottom: 1px solid var(--border);
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+  user-select: none;
+}
+.export-row:last-child { border-bottom: none; }
+.export-row:hover { background: rgba(255, 255, 255, 0.02); }
+.export-row.header {
+  background: var(--card-2);
+  color: var(--muted);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  cursor: default;
+  position: sticky; top: 0;
+  z-index: 1;
+}
+.export-row .num { text-align: right; }
+.export-row input[type="checkbox"] { width: 16px; height: 16px; cursor: pointer; }
+.export-action.buy { color: var(--good); font-weight: 600; }
+.export-action.sell { color: var(--bad); font-weight: 600; }
+.export-isin { color: var(--muted); font-size: 11px; }
+
+@media (max-width: 700px) {
+  .export-row {
+    grid-template-columns: 28px 80px 50px 1fr 70px 80px;
+    font-size: 12px;
+    gap: 6px;
+  }
+  .export-row .col-amount { display: none; }
+  .modal-card { padding: 20px 18px; }
+}
+
 /* Toast */
 #toast {
   position: fixed;

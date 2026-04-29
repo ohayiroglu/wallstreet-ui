@@ -166,6 +166,41 @@
     </p>
   </section>
 
+  <!-- Parqet export modal -->
+  <div id="export-modal" class="modal hidden">
+    <div class="modal-backdrop" data-act="export-cancel"></div>
+    <div class="modal-card">
+      <div class="modal-step" data-step="dates">
+        <h2>📥 Export to Parqet — Step 1 of 2</h2>
+        <p class="muted">Choose the date range to include. BUY/SELL transactions in this window will be listed for selection in the next step.</p>
+        <div class="form-row">
+          <label>From:
+            <input type="date" id="export-from">
+          </label>
+          <label>To:
+            <input type="date" id="export-to">
+          </label>
+        </div>
+        <div id="export-range-info" class="muted" style="font-size:13px;margin-top:8px;"></div>
+        <div class="modal-actions">
+          <button class="muted-btn" data-act="export-cancel">Cancel</button>
+          <button class="primary" data-act="export-next">Next →</button>
+        </div>
+      </div>
+
+      <div class="modal-step hidden" data-step="select">
+        <h2>📥 Export to Parqet — Step 2 of 2</h2>
+        <p class="muted">Tick the rows to include in the export.</p>
+        <div id="export-list" class="export-list"></div>
+        <div class="modal-actions">
+          <button class="muted-btn" data-act="export-back">← Back</button>
+          <button class="muted-btn" data-act="export-toggle-all">Toggle all</button>
+          <button class="primary" data-act="export-download">Download (<span id="export-count">0</span>)</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <footer>
     <button id="refresh-btn">↻ Refresh</button>
     <button id="logout-btn" class="muted-btn">Clear Token</button>
@@ -173,6 +208,6 @@
   </footer>
 </div>
 
-<script src="app.js?v=20260429h"></script>
+<script src="app.js?v=20260429i"></script>
 </body>
 </html>

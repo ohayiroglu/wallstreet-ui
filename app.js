@@ -1123,7 +1123,7 @@ function csvQuote(v) {
   return `"${String(v).replace(/"/g, '""')}"`;
 }
 
-function generateParqetCsv() {
+function generateParqetCsvFromTxns(txns) {
   const lines = [PARQET_HEADERS.map(csvQuote).join(",")];
   let n = 0;
   // Build a position lookup so we can fall back to a position-level ISIN when
@@ -1131,8 +1131,8 @@ function generateParqetCsv() {
   const positionByTicker = {};
   for (const p of state.positions) positionByTicker[p.ticker] = p;
 
-  for (const t of state.transactions) {
-    if (t.action !== "BUY" && t.action !== "SELL") continue;
+  for (const t of txns) {
+    if (!t || (t.action !== "BUY" && t.action !== "SELL")) continue;
     const isBuy = t.action === "BUY";
     const meta = state.tickerIndex.find(x => x.t === t.ticker) || {};
     const name = meta.n || t.ticker;
@@ -1185,22 +1185,127 @@ function generateParqetCsv() {
   return { csv: lines.join("\n") + "\n", count: n };
 }
 
-function downloadParqetCsv() {
-  const { csv, count } = generateParqetCsv();
-  if (count === 0) {
+// ---------- Parqet export modal (date range + per-row checkboxes) ----------
+function openExportModal() {
+  const trades = state.transactions.filter(t => t.action === "BUY" || t.action === "SELL");
+  if (trades.length === 0) {
     toast("No BUY/SELL trades to export yet", "bad");
     return;
   }
+  const dates = trades.map(t => t.date).sort();
+  document.getElementById("export-from").value = dates[0];
+  document.getElementById("export-to").value = todayIso();
+  document.getElementById("export-range-info").textContent =
+    `${trades.length} BUY/SELL trade(s) on file, earliest ${dates[0]}.`;
+  showExportStep("dates");
+  document.getElementById("export-modal").classList.remove("hidden");
+}
+
+function closeExportModal() {
+  document.getElementById("export-modal").classList.add("hidden");
+}
+
+function showExportStep(step) {
+  document.querySelectorAll("#export-modal .modal-step").forEach(s => {
+    s.classList.toggle("hidden", s.dataset.step !== step);
+  });
+}
+
+function buildExportSelectStep() {
+  const from = document.getElementById("export-from").value;
+  const to   = document.getElementById("export-to").value;
+  if (!from || !to) { toast("Set both dates", "bad"); return; }
+  if (from > to)   { toast("From must be ≤ To", "bad"); return; }
+
+  const inRange = state.transactions
+    .map((t, i) => ({ ...t, _idx: i }))
+    .filter(t => (t.action === "BUY" || t.action === "SELL"))
+    .filter(t => t.date >= from && t.date <= to)
+    .sort((a, b) => b.date.localeCompare(a.date));
+
+  const list = document.getElementById("export-list");
+  if (inRange.length === 0) {
+    list.innerHTML = `<div class="export-row" style="grid-template-columns:1fr;justify-content:center;color:var(--muted);">No BUY/SELL transactions between ${from} and ${to}.</div>`;
+    document.getElementById("export-count").textContent = "0";
+    showExportStep("select");
+    return;
+  }
+
+  // Build header row + data rows in a single template
+  const header = `<div class="export-row header">
+    <div></div>
+    <div>Date</div>
+    <div>Action</div>
+    <div>Ticker / ISIN</div>
+    <div class="num">Shares</div>
+    <div class="num">Price</div>
+    <div class="num col-amount">Amount</div>
+  </div>`;
+  const rows = inRange.map(t => `
+    <label class="export-row">
+      <input type="checkbox" class="export-cb" data-idx="${t._idx}" checked>
+      <span>${t.date}</span>
+      <span class="export-action ${t.action.toLowerCase()}">${t.action}</span>
+      <span><strong>${t.ticker}</strong>${t.isin ? `<br><span class="export-isin">${t.isin}</span>` : ""}</span>
+      <span class="num">${t.shares.toFixed(4).replace(/\.?0+$/, "")}</span>
+      <span class="num">$${t.price.toFixed(2)}</span>
+      <span class="num col-amount">$${t.amount.toFixed(0)}</span>
+    </label>`).join("");
+  list.innerHTML = header + rows;
+  updateExportCount();
+  showExportStep("select");
+}
+
+function updateExportCount() {
+  const n = document.querySelectorAll("#export-list .export-cb:checked").length;
+  document.getElementById("export-count").textContent = n;
+}
+
+function downloadSelectedParqet() {
+  const checked = [...document.querySelectorAll("#export-list .export-cb:checked")];
+  if (checked.length === 0) { toast("Select at least one transaction", "bad"); return; }
+  const txns = checked.map(c => state.transactions[parseInt(c.dataset.idx, 10)]).filter(Boolean);
+  const { csv, count } = generateParqetCsvFromTxns(txns);
+  if (count === 0) { toast("Nothing exportable in selection", "bad"); return; }
+
   const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
   const url = URL.createObjectURL(blob);
+  const from = document.getElementById("export-from").value;
+  const to   = document.getElementById("export-to").value;
+  const fname = (from === to)
+    ? `parqet_export_${from}.csv`
+    : `parqet_export_${from}_to_${to}.csv`;
   const a = document.createElement("a");
-  a.href = url;
-  a.download = `parqet_export_${todayIso()}.csv`;
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
+  a.href = url; a.download = fname;
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
   URL.revokeObjectURL(url);
-  toast(`Downloaded ${count} trades to Parqet CSV`, "good");
+  toast(`Downloaded ${count} trades`, "good");
+  closeExportModal();
+}
+
+function setupExportModal() {
+  document.addEventListener("click", (e) => {
+    const btn = e.target.closest("[data-act]");
+    if (!btn) return;
+    const act = btn.dataset.act;
+    if (act === "export-cancel" || act === "export-back") {
+      if (act === "export-back") showExportStep("dates");
+      else closeExportModal();
+    } else if (act === "export-next") {
+      buildExportSelectStep();
+    } else if (act === "export-download") {
+      downloadSelectedParqet();
+    } else if (act === "export-toggle-all") {
+      const cbs = [...document.querySelectorAll("#export-list .export-cb")];
+      const allChecked = cbs.every(c => c.checked);
+      cbs.forEach(c => { c.checked = !allChecked; });
+      updateExportCount();
+    }
+  });
+  // Live count when user (un)checks a row
+  document.addEventListener("change", (e) => {
+    if (e.target.classList?.contains("export-cb")) updateExportCount();
+  });
 }
 
 // ---------- Bootstrap ----------
@@ -1208,6 +1313,7 @@ async function init() {
   setupTabs();
   setupTickerSearch();
   setupRowActions();
+  setupExportModal();
   await loadTickerIndex();
 
   if (!getToken()) {
@@ -1241,7 +1347,7 @@ async function init() {
   document.getElementById("buy-submit").addEventListener("click", submitBuy);
   document.getElementById("sell-submit").addEventListener("click", submitSell);
   document.getElementById("csv-submit").addEventListener("click", commitCsvImport);
-  document.getElementById("parqet-download").addEventListener("click", downloadParqetCsv);
+  document.getElementById("parqet-download").addEventListener("click", openExportModal);
 
   ["buy-shares", "buy-price"].forEach(id =>
     document.getElementById(id).addEventListener("input", updateBuySummary));
