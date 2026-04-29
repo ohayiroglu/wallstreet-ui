@@ -3,13 +3,13 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Wallstreet Portfolio Manager</title>
+<title>Investment Portfolio</title>
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
 <div id="app">
   <header>
-    <h1>📊 Wallstreet Portfolio</h1>
+    <h1>📊 Investment Portfolio</h1>
     <div id="status">Loading...</div>
   </header>
 
@@ -34,18 +34,11 @@
     <p class="muted">Token is stored only in this browser's localStorage. It is never sent anywhere except api.github.com (to commit your changes on your behalf).</p>
   </section>
 
-  <!-- Strategy selector pills (DCF removed 2026-04-29 — only GPM is active) -->
-  <nav id="strategy-pills" class="strategy-pills">
-    <button class="pill active" data-strategy="all">📊 All</button>
-    <button class="pill pill-gpm" data-strategy="gpm">📈 GPM</button>
-  </nav>
-
   <!-- Portfolio overview -->
   <section id="portfolio" class="card">
     <div class="card-header">
-      <h2 id="portfolio-title">Portfolio</h2>
+      <h2 id="portfolio-title">Holdings</h2>
       <div class="stats" id="strategy-stats">
-        <span class="stat-pill"><span class="dot dot-gpm"></span> GPM: <strong id="gpm-value">—</strong></span>
         <span class="stat-pill total">Total: <strong id="total-value">—</strong></span>
       </div>
     </div>
@@ -53,7 +46,6 @@
       <thead>
         <tr>
           <th>Ticker</th>
-          <th>Strategy</th>
           <th>Shares</th>
           <th>Cost basis</th>
           <th>First buy</th>
@@ -63,7 +55,7 @@
       <tbody><!-- populated by JS --></tbody>
     </table>
     <div id="empty-positions" class="empty-state hidden">
-      No positions in this strategy yet.
+      No positions yet.
     </div>
   </section>
 
@@ -142,7 +134,7 @@
     <h2>Recent Transactions</h2>
     <table id="transactions-table">
       <thead>
-        <tr><th>Date</th><th>Action</th><th>Strategy</th><th>Ticker</th><th>Shares</th><th>Price</th><th>Amount</th></tr>
+        <tr><th>Date</th><th>Action</th><th>Ticker</th><th>Shares</th><th>Price</th><th>Amount</th></tr>
       </thead>
       <tbody></tbody>
     </table>

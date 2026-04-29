@@ -1,6 +1,7 @@
-// Wallstreet Portfolio Manager — static GitHub Pages app
-// Reads/writes positions.csv, transactions.csv, cash.json on github.com/ohayiroglu/wallstreet-state via the GitHub API.
-// GPM strategy is the active sleeve (monthly margin-acceleration); DCF was retired 2026-04-29.
+// Investment Portfolio — static GitHub Pages app
+// Reads/writes positions.csv, transactions.csv on github.com/ohayiroglu/wallstreet-state via the GitHub API.
+// Single-strategy UI (GPM canonical 2026-04-29). The strategy column is still
+// written to CSV (default "gpm") for backend compat but is invisible in the UI.
 
 const REPO = "ohayiroglu/wallstreet-state";
 const BRANCH = "main";
@@ -17,7 +18,6 @@ const state = {
   transactions: [], // [{date, action, ticker, shares, price, amount, strategy}]
   tickerIndex: [],  // [{t, n, s}]
   pendingCsvRows: null,
-  activeStrategy: "all",  // "all" | "dcf" | "gpm"
 };
 
 // ---------- Toast ----------
@@ -49,29 +49,11 @@ function showTokenSetup(visible) {
 }
 
 // ---------- Strategy helpers ----------
-// DCF was retired from the UI on 2026-04-29 — only GPM is actively used.
-// Legacy DCF rows (if any) still render with their badge, but new entries
-// always default to "gpm".
+// Single-strategy UI (GPM). Backend CSV still uses the strategy column
+// (default "gpm") so legacy/historic entries keep their tag.
 function normalizeStrategy(s) {
   const v = (s || "").toString().trim().toLowerCase();
-  return (v === "dcf") ? "dcf" : "gpm";
-}
-
-function buyStrategySelected() {
-  return "gpm";
-}
-
-function csvStrategySelected() {
-  return "gpm";
-}
-
-function setActiveStrategy(s) {
-  state.activeStrategy = s;
-  document.querySelectorAll(".strategy-pills .pill").forEach(p => {
-    p.classList.toggle("active", p.dataset.strategy === s);
-  });
-  renderPortfolio();
-  refreshSellDropdown();
+  return v || "gpm";
 }
 
 // ---------- GitHub API ----------
@@ -178,9 +160,8 @@ async function loadState() {
     renderTransactions();
     refreshSellDropdown();
     document.getElementById("last-sync").textContent = "Synced: " + new Date().toLocaleTimeString();
-    const gpmCount = state.positions.filter(p => p.strategy === "gpm").length;
     document.getElementById("status").textContent =
-      `${gpmCount} GPM • ${state.transactions.length} transactions`;
+      `${state.positions.length} positions • ${state.transactions.length} transactions`;
   } catch (e) {
     toast("Load error: " + e.message, "bad");
     document.getElementById("status").textContent = "ERROR";
@@ -247,28 +228,16 @@ function fmtMoney(v) {
   return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(v);
 }
 
-function strategyBadge(s) {
-  const norm = normalizeStrategy(s);
-  return `<span class="strategy-badge ${norm}">${norm.toUpperCase()}</span>`;
-}
-
-function filteredPositions() {
-  if (state.activeStrategy === "all") return state.positions;
-  return state.positions.filter(p => p.strategy === state.activeStrategy);
-}
-
 function renderPortfolio() {
   const tbody = document.querySelector("#positions-table tbody");
   const emptyEl = document.getElementById("empty-positions");
   const tableEl = document.getElementById("positions-table");
   tbody.innerHTML = "";
-  const filtered = filteredPositions();
-  const sorted = [...filtered].sort((a, b) => b.cost_basis - a.cost_basis);
+  const sorted = [...state.positions].sort((a, b) => b.cost_basis - a.cost_basis);
   for (const p of sorted) {
     const row = document.createElement("tr");
     row.innerHTML = `
       <td><strong>${p.ticker}</strong></td>
-      <td>${strategyBadge(p.strategy)}</td>
       <td>${p.shares.toFixed(4).replace(/\.?0+$/, "")}</td>
       <td>${fmtMoney(p.cost_basis)}</td>
       <td>${p.first_buy_date}</td>
@@ -283,36 +252,20 @@ function renderPortfolio() {
     emptyEl.classList.add("hidden");
   }
 
-  // Stats: cash & DCF removed from UI 2026-04-29 (GPM is the only active strategy)
-  const gpmCost = state.positions.filter(p => p.strategy === "gpm").reduce((s, p) => s + p.cost_basis, 0);
   const totalCost = state.positions.reduce((s, p) => s + p.cost_basis, 0);
-  document.getElementById("gpm-value").textContent = fmtMoney(gpmCost);
   document.getElementById("total-value").textContent = fmtMoney(totalCost);
-
-  // Title reflects active strategy
-  const title = document.getElementById("portfolio-title");
-  if (state.activeStrategy === "dcf") title.textContent = "💎 DCF Portfolio";
-  else if (state.activeStrategy === "gpm") title.textContent = "📈 GPM Portfolio";
-  else title.textContent = "Portfolio (All)";
 }
 
 function renderTransactions() {
   const tbody = document.querySelector("#transactions-table tbody");
   tbody.innerHTML = "";
-  // Filter recent transactions by active strategy too (DEPOSIT shows in all views)
-  let txns = [...state.transactions];
-  if (state.activeStrategy !== "all") {
-    txns = txns.filter(t => t.action === "DEPOSIT" || t.strategy === state.activeStrategy);
-  }
-  const recent = txns.sort((a, b) => b.date.localeCompare(a.date)).slice(0, 20);
+  const recent = [...state.transactions].sort((a, b) => b.date.localeCompare(a.date)).slice(0, 20);
   for (const t of recent) {
     const row = document.createElement("tr");
     const actionColor = t.action === "BUY" ? "#10B981" : t.action === "SELL" ? "#EF4444" : "#94A3B8";
-    const stratCell = t.action === "DEPOSIT" ? '<span class="muted">—</span>' : strategyBadge(t.strategy);
     row.innerHTML = `
       <td>${t.date}</td>
       <td style="color:${actionColor}">${t.action}</td>
-      <td>${stratCell}</td>
       <td>${t.ticker || ""}</td>
       <td>${t.shares ? t.shares.toFixed(4).replace(/\.?0+$/, "") : ""}</td>
       <td>${t.price ? fmtMoney(t.price) : ""}</td>
@@ -324,16 +277,11 @@ function renderTransactions() {
 function refreshSellDropdown() {
   const sel = document.getElementById("sell-ticker");
   sel.innerHTML = '<option value="">— select —</option>';
-  // Sell dropdown uses ticker:strategy as key so we can sell from the right pool
-  const sellable = state.activeStrategy === "all"
-    ? state.positions
-    : state.positions.filter(p => p.strategy === state.activeStrategy);
-  for (const p of sellable) {
+  for (const p of state.positions) {
     const opt = document.createElement("option");
     const key = `${p.ticker}|${p.strategy}`;
     opt.value = key;
-    const stratLabel = p.strategy.toUpperCase();
-    opt.textContent = `${p.ticker} [${stratLabel}] (${p.shares.toFixed(4).replace(/\.?0+$/, "")} shares)`;
+    opt.textContent = `${p.ticker} (${p.shares.toFixed(4).replace(/\.?0+$/, "")} shares)`;
     sel.appendChild(opt);
   }
 }
@@ -417,11 +365,11 @@ function updateSellSummary() {
   const p = parseFloat(document.getElementById("sell-price").value) || 0;
   const sum = document.getElementById("sell-summary");
   if (key && s && p) {
-    const [tk, strat] = key.split("|");
+    const [tk] = key.split("|");
     const total = s * p;
-    const pos = state.positions.find(x => x.ticker === tk && x.strategy === strat);
+    const pos = state.positions.find(x => x.ticker === tk);
     const remaining = pos ? (pos.shares - s).toFixed(4) : "?";
-    sum.textContent = `Proceeds: ${fmtMoney(total)} • Remaining: ${remaining} ${tk} (${strat.toUpperCase()})`;
+    sum.textContent = `Proceeds: ${fmtMoney(total)} • Remaining: ${remaining} ${tk}`;
   } else {
     sum.textContent = "";
   }
@@ -435,12 +383,6 @@ function setupTabs() {
       document.querySelectorAll(".tab-btn").forEach(b => b.classList.toggle("active", b === btn));
       document.querySelectorAll(".tab-content").forEach(c => c.classList.toggle("active", c.dataset.tab === tab));
     });
-  });
-}
-
-function setupStrategyPills() {
-  document.querySelectorAll(".strategy-pills .pill").forEach(p => {
-    p.addEventListener("click", () => setActiveStrategy(p.dataset.strategy));
   });
 }
 
@@ -805,7 +747,6 @@ function downloadParqetCsv() {
 // ---------- Bootstrap ----------
 async function init() {
   setupTabs();
-  setupStrategyPills();
   setupTickerSearch();
   await loadTickerIndex();
 
