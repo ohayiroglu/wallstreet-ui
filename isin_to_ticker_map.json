@@ -1,0 +1,40 @@
+{
+  "_comment": "ISIN→ticker+name+sector map for European brokers (Trade Republic, etc.). Used by import_cansu_traderepublic.py and UI imports to resolve ISINs to display tickers. Add entries as needed.",
+  "IE00B5BMR087": {"ticker": "CSPX",  "name": "iShares Core S&P 500 UCITS ETF",                "sector": "ETF"},
+  "IE00B3WJKG14": {"ticker": "IUIT",  "name": "iShares S&P 500 Information Technology UCITS",  "sector": "ETF"},
+  "IE00B4L5Y983": {"ticker": "IWDA",  "name": "iShares Core MSCI World UCITS ETF",             "sector": "ETF"},
+  "LU1781541179": {"ticker": "CW8",   "name": "Amundi MSCI World V UCITS ETF (legacy)",        "sector": "ETF"},
+  "IE000BI8OT95": {"ticker": "WEBN",  "name": "Amundi MSCI World UCITS ETF Acc",               "sector": "ETF"},
+
+  "US0378331005": {"ticker": "AAPL",  "name": "Apple Inc.",                          "sector": "Information Technology"},
+  "US0079031078": {"ticker": "AMD",   "name": "Advanced Micro Devices",              "sector": "Information Technology"},
+  "US67066G1040": {"ticker": "NVDA",  "name": "NVIDIA Corp.",                        "sector": "Information Technology"},
+  "US4581401001": {"ticker": "INTC",  "name": "Intel Corp.",                         "sector": "Information Technology"},
+  "US69608A1088": {"ticker": "PLTR",  "name": "Palantir Technologies",               "sector": "Information Technology"},
+  "US7811541090": {"ticker": "RBRK",  "name": "Rubrik Inc.",                         "sector": "Information Technology"},
+  "US98956A1051": {"ticker": "ZETA",  "name": "Zeta Global Holdings",                "sector": "Information Technology"},
+  "US00724F1012": {"ticker": "ADBE",  "name": "Adobe Inc.",                          "sector": "Information Technology"},
+  "US21873S1087": {"ticker": "CRWV",  "name": "CoreWeave Inc.",                      "sector": "Information Technology"},
+  "NL0009805522": {"ticker": "NBIS",  "name": "Nebius Group",                        "sector": "Information Technology"},
+  "AU0000185993": {"ticker": "IREN",  "name": "IREN Ltd.",                           "sector": "Information Technology"},
+  "US5949724083": {"ticker": "MSTR",  "name": "Strategy (MicroStrategy) A",          "sector": "Information Technology"},
+
+  "US70450Y1038": {"ticker": "PYPL",  "name": "PayPal Holdings",                     "sector": "Financials"},
+  "US83406F1021": {"ticker": "SOFI",  "name": "SoFi Technologies",                   "sector": "Financials"},
+  "US09175A2069": {"ticker": "BMNR",  "name": "BitMine Immersion Technology",        "sector": "Financials"},
+  "US0846707026": {"ticker": "BRK.B", "name": "Berkshire Hathaway B",                "sector": "Financials"},
+  "US48581R2058": {"ticker": "KSPI",  "name": "Kaspi.kz (GDR)",                      "sector": "Financials"},
+
+  "US91324P1021": {"ticker": "UNH",   "name": "UnitedHealth Group",                  "sector": "Health Care"},
+  "US60855R1005": {"ticker": "MOH",   "name": "Molina Healthcare",                   "sector": "Health Care"},
+  "CA00288U1066": {"ticker": "ABCL",  "name": "AbCellera Biologics",                 "sector": "Health Care"},
+
+  "US5500211090": {"ticker": "LULU",  "name": "Lululemon Athletica",                 "sector": "Consumer Discretionary"},
+  "US0231351067": {"ticker": "AMZN",  "name": "Amazon.com",                          "sector": "Consumer Discretionary"},
+  "US58733R1023": {"ticker": "MELI",  "name": "MercadoLibre",                        "sector": "Consumer Discretionary"},
+  "US2270461096": {"ticker": "CROX",  "name": "Crocs Inc.",                          "sector": "Consumer Discretionary"},
+
+  "US7731211089": {"ticker": "RKLB",  "name": "Rocket Lab",                          "sector": "Industrials"},
+  "US00217D1000": {"ticker": "ASTS",  "name": "AST SpaceMobile",                     "sector": "Communication Services"},
+  "US30303M1027": {"ticker": "META",  "name": "Meta Platforms (A)",                  "sector": "Communication Services"}
+}

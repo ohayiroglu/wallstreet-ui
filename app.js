@@ -769,6 +769,21 @@ async function loadTickerIndex() {
   state.tickerIndex = await res.json();
 }
 
+// ISIN→ticker map for European brokers (Trade Republic etc.). Loaded once on
+// startup; consulted by the TR CSV parser to resolve ISINs to display tickers.
+let ISIN_MAP = {};
+async function loadIsinMap() {
+  try {
+    const res = await fetch("isin_to_ticker_map.json");
+    if (!res.ok) return;
+    const raw = await res.json();
+    ISIN_MAP = Object.fromEntries(
+      Object.entries(raw).filter(([k]) => !k.startsWith("_")));
+  } catch {
+    ISIN_MAP = {};
+  }
+}
+
 function searchTickers(q) {
   if (!q) return [];
   const ql = q.toLowerCase();
@@ -1055,10 +1070,14 @@ function parseTradeRepublicCsv(text, strategy) {
 
     let date = (r[headers[colDate]] || todayIso()).split(/[T ]/)[0];
 
+    // Resolve ISIN → ticker via the static map (falls back to ISIN if unmapped)
+    const mapped = ISIN_MAP[isin];
+    const ticker = mapped?.ticker || isin;
+
     out.push({
       date,
       action: t,
-      ticker: isin,   // use ISIN as ticker (no separate ticker field in TR exports)
+      ticker,
       isin,
       shares,
       price,
@@ -1628,7 +1647,7 @@ async function init() {
   setupRowActions();
   setupExportModal();
   setupPortfolioBar();
-  await loadTickerIndex();
+  await Promise.all([loadTickerIndex(), loadIsinMap()]);
 
   if (!getToken()) {
     showTokenSetup(true);
