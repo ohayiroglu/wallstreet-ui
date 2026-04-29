@@ -178,6 +178,18 @@
     </table>
   </section>
 
+  <!-- Parqet export -->
+  <section id="parqet-export" class="card">
+    <div class="card-header">
+      <h2>📥 Export to Parqet</h2>
+      <button id="parqet-download" class="primary">Download CSV</button>
+    </div>
+    <p class="muted" style="margin:0;">
+      Builds a Parqet-compatible CSV from <code>transactions.csv</code> (BUY/SELL rows only — DEPOSIT and corporate actions are skipped).
+      23-column schema mirrors the Trade Republic export format. Currency is USD; symbol field uses the ticker (Parqet auto-resolves common US tickers; ISIN can be added manually if needed).
+    </p>
+  </section>
+
   <footer>
     <button id="refresh-btn">↻ Refresh</button>
     <button id="logout-btn" class="muted-btn">Clear Token</button>

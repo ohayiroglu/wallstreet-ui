@@ -712,6 +712,99 @@ async function commitCsvImport() {
   }
 }
 
+// ---------- Parqet CSV export ----------
+// Mirrors the 23-column Trade Republic export format that Parqet ingests.
+// Only BUY/SELL trades are exported; DEPOSITs and corporate actions are skipped.
+const PARQET_HEADERS = [
+  "datetime", "date", "account_type", "category", "type", "asset_class",
+  "name", "symbol", "shares", "price", "amount", "fee", "tax", "currency",
+  "original_amount", "original_currency", "fx_rate", "description",
+  "transaction_id", "counterparty_name", "counterparty_iban",
+  "payment_reference", "mcc_code",
+];
+
+function uuid4() {
+  // Browser-native when available; else fallback
+  if (typeof crypto !== "undefined" && crypto.randomUUID) return crypto.randomUUID();
+  return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, c => {
+    const r = (Math.random() * 16) | 0;
+    const v = c === "x" ? r : (r & 0x3) | 0x8;
+    return v.toString(16);
+  });
+}
+
+function csvQuote(v) {
+  if (v === null || v === undefined) return '""';
+  return `"${String(v).replace(/"/g, '""')}"`;
+}
+
+function generateParqetCsv() {
+  const lines = [PARQET_HEADERS.map(csvQuote).join(",")];
+  let n = 0;
+  for (const t of state.transactions) {
+    if (t.action !== "BUY" && t.action !== "SELL") continue;
+    const isBuy = t.action === "BUY";
+    const meta = state.tickerIndex.find(x => x.t === t.ticker) || {};
+    const name = meta.n || t.ticker;
+
+    // datetime: noon UTC for determinism (date column is the truth)
+    const datetime = `${t.date}T12:00:00.000Z`;
+
+    // Sign conventions match the Trade Republic export:
+    //   BUY:  shares positive, amount negative (cash out)
+    //   SELL: shares negative, amount positive (cash in)
+    const sharesStr = (isBuy ? t.shares : -t.shares).toFixed(10);
+    const amountStr = (isBuy ? -t.amount : t.amount).toFixed(2);
+    const priceStr  = t.price.toFixed(10);
+
+    const desc = `${isBuy ? "Buy" : "Sell"} trade ${t.ticker} ${name}, quantity: ${t.shares}`;
+
+    const row = [
+      datetime,           // datetime
+      t.date,             // date
+      "DEFAULT",          // account_type
+      "TRADING",          // category
+      t.action,           // type (BUY / SELL)
+      "STOCK",            // asset_class
+      name,               // name
+      t.ticker,           // symbol (ticker — Parqet typically auto-resolves US names)
+      sharesStr,          // shares
+      priceStr,           // price
+      amountStr,          // amount
+      "",                 // fee (we don't track)
+      "",                 // tax
+      "USD",              // currency (T212 USD account)
+      "",                 // original_amount
+      "",                 // original_currency
+      "",                 // fx_rate
+      desc,               // description
+      uuid4(),            // transaction_id
+      "", "", "", "",     // counterparty_name, _iban, payment_reference, mcc_code
+    ];
+    lines.push(row.map(csvQuote).join(","));
+    n++;
+  }
+  return { csv: lines.join("\n") + "\n", count: n };
+}
+
+function downloadParqetCsv() {
+  const { csv, count } = generateParqetCsv();
+  if (count === 0) {
+    toast("No BUY/SELL trades to export yet", "bad");
+    return;
+  }
+  const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `parqet_export_${todayIso()}.csv`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+  toast(`Downloaded ${count} trades to Parqet CSV`, "good");
+}
+
 // ---------- Bootstrap ----------
 async function init() {
   setupTabs();
@@ -746,6 +839,7 @@ async function init() {
   document.getElementById("buy-submit").addEventListener("click", submitBuy);
   document.getElementById("sell-submit").addEventListener("click", submitSell);
   document.getElementById("csv-submit").addEventListener("click", commitCsvImport);
+  document.getElementById("parqet-download").addEventListener("click", downloadParqetCsv);
 
   ["buy-shares", "buy-price"].forEach(id =>
     document.getElementById(id).addEventListener("input", updateBuySummary));
