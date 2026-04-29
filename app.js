@@ -14,12 +14,18 @@ const API_BASE = `https://api.github.com/repos/${REPO}`;
 // needs it), but Buy/Sell no longer mutate it from the UI.
 const state = {
   cash: { cash: 0, total_contributed: 0, last_contribution_date: null },
-  positions: [],   // [{ticker, shares, cost_basis, first_buy_date, sector, strategy}]
-  transactions: [], // [{date, action, ticker, shares, price, amount, strategy}]
+  positions: [],   // [{ticker, shares, cost_basis, first_buy_date, sector, strategy/portfolio}]
+  transactions: [], // [{date, action, ticker, shares, price, amount, strategy/portfolio}]
   tickerIndex: [],  // [{t, n, s}]
   pendingCsvRows: null,
   livePrices: {},  // ticker → {price, prevClose, change, changePct, dayHigh, dayLow, w52High, w52Low, ts}
   pricesLoadedAt: null,
+  // Multi-portfolio state. Internally we keep using the existing CSV `strategy`
+  // column as the portfolio bucket — no schema migration needed. Default
+  // bucket name is "gpm" (the system-managed sleeve); user-created portfolios
+  // get free-form names like "personal-picks" or "ai-bets".
+  activePortfolio: localStorage.getItem("ws_active_portfolio") || "__all__",
+  portfolios: ["gpm"],   // populated from positions/transactions on load
 };
 
 // ---------- Toast ----------
@@ -154,17 +160,101 @@ async function refreshLivePrices() {
   renderPortfolio();
 }
 
-// ---------- Strategy helpers ----------
-// Single-strategy UI (GPM). Backend CSV still uses the strategy column
-// (default "gpm") so legacy/historic entries keep their tag.
+// ---------- Portfolio helpers ----------
+// The CSV `strategy` column doubles as portfolio bucket. "gpm" = system,
+// anything else = user-created (e.g. "personal-picks"). Never empty.
 function normalizeStrategy(s) {
   const v = (s || "").toString().trim().toLowerCase();
   return v || "gpm";
 }
-// Hard-coded single strategy now that the radio is gone — keeping these
-// helpers as one-liners avoids touching every call site.
-function buyStrategySelected() { return "gpm"; }
-function csvStrategySelected() { return "gpm"; }
+function isValidPortfolioName(s) {
+  return /^[a-z0-9][a-z0-9-]{0,39}$/.test(s);
+}
+// Returns the portfolio that NEW transactions should be tagged with.
+// "__all__" is a UI-only filter, never a real bucket — fall back to gpm.
+function activePortfolioForWrite() {
+  const a = state.activePortfolio;
+  return (!a || a === "__all__") ? "gpm" : a;
+}
+// Buy/CSV-import helpers used to be hard-coded "gpm" — now they follow
+// the active portfolio so newly logged trades land in the right bucket.
+function buyStrategySelected() { return activePortfolioForWrite(); }
+function csvStrategySelected() { return activePortfolioForWrite(); }
+
+function rebuildPortfolioList() {
+  const fromPos = new Set(state.positions.map(p => p.strategy || "gpm"));
+  const fromTxn = new Set(state.transactions
+    .filter(t => t.action !== "DEPOSIT")
+    .map(t => t.strategy || "gpm"));
+  const all = new Set(["gpm", ...fromPos, ...fromTxn]);
+  state.portfolios = [...all].sort();
+}
+
+function renderPortfolioSelector() {
+  const sel = document.getElementById("portfolio-select");
+  const cur = state.activePortfolio || "__all__";
+  sel.innerHTML = "";
+  const allOpt = document.createElement("option");
+  allOpt.value = "__all__"; allOpt.textContent = "📊 All portfolios";
+  sel.appendChild(allOpt);
+  for (const p of state.portfolios) {
+    const opt = document.createElement("option");
+    opt.value = p;
+    opt.textContent = (p === "gpm" ? "📈 " : "💼 ") + p;
+    sel.appendChild(opt);
+  }
+  if (state.portfolios.includes(cur) || cur === "__all__") sel.value = cur;
+  else { sel.value = "__all__"; state.activePortfolio = "__all__"; }
+  // meta
+  const n = state.activePortfolio === "__all__"
+    ? state.positions.length
+    : state.positions.filter(p => p.strategy === state.activePortfolio).length;
+  document.getElementById("portfolio-meta").textContent =
+    `${n} position(s) in this view • ${state.portfolios.length} portfolio(s) total`;
+}
+
+function setActivePortfolio(name) {
+  state.activePortfolio = name;
+  localStorage.setItem("ws_active_portfolio", name);
+  renderPortfolioSelector();
+  renderPortfolio();
+  renderTransactions();
+  refreshSellDropdown();
+}
+
+function setupPortfolioBar() {
+  document.getElementById("portfolio-select").addEventListener("change", (e) => {
+    setActivePortfolio(e.target.value);
+  });
+  document.getElementById("portfolio-new").addEventListener("click", () => {
+    document.getElementById("newport-name").value = "";
+    document.getElementById("newport-modal").classList.remove("hidden");
+    setTimeout(() => document.getElementById("newport-name").focus(), 50);
+  });
+  // Modal handlers via delegated click
+  document.addEventListener("click", (e) => {
+    const btn = e.target.closest("[data-act]");
+    if (!btn) return;
+    if (btn.dataset.act === "newport-cancel") {
+      document.getElementById("newport-modal").classList.add("hidden");
+    } else if (btn.dataset.act === "newport-create") {
+      const name = (document.getElementById("newport-name").value || "")
+        .trim().toLowerCase();
+      if (!isValidPortfolioName(name)) {
+        toast("Use lowercase letters/digits/dashes (max 40 chars, must start with letter/digit)", "bad");
+        return;
+      }
+      if (state.portfolios.includes(name)) {
+        toast(`"${name}" already exists`, "bad");
+        return;
+      }
+      state.portfolios = [...state.portfolios, name].sort();
+      document.getElementById("newport-modal").classList.add("hidden");
+      setActivePortfolio(name);
+      toast(`Portfolio "${name}" ready — log a buy to populate it`, "good");
+    }
+  });
+}
 
 // ---------- GitHub API ----------
 async function ghFetchRaw(path) {
@@ -292,6 +382,8 @@ async function loadState() {
     state.transactions = txnTxt ? parseTransactions(txnTxt) : [];
     state.cash = cashTxt ? JSON.parse(cashTxt) : { cash: 0, total_contributed: 0, last_contribution_date: null };
 
+    rebuildPortfolioList();
+    renderPortfolioSelector();
     renderPortfolio();
     renderTransactions();
     refreshSellDropdown();
@@ -380,12 +472,22 @@ function fmtSigned(v) {
   return s + fmtNum(v);
 }
 
+function filteredPositions() {
+  if (!state.activePortfolio || state.activePortfolio === "__all__") return state.positions;
+  return state.positions.filter(p => (p.strategy || "gpm") === state.activePortfolio);
+}
+function filteredTransactions() {
+  if (!state.activePortfolio || state.activePortfolio === "__all__") return state.transactions;
+  return state.transactions.filter(t =>
+    t.action === "DEPOSIT" ? false : (t.strategy || "gpm") === state.activePortfolio);
+}
+
 function renderPortfolio() {
   const tbody = document.querySelector("#positions-table tbody");
   const emptyEl = document.getElementById("empty-positions");
   const tableEl = document.getElementById("positions-table");
   tbody.innerHTML = "";
-  const sorted = [...state.positions].sort((a, b) => b.cost_basis - a.cost_basis);
+  const sorted = [...filteredPositions()].sort((a, b) => b.cost_basis - a.cost_basis);
 
   let totalCost = 0, totalValue = 0;
 
@@ -469,9 +571,12 @@ function renderPortfolio() {
 function renderTransactions() {
   const tbody = document.querySelector("#transactions-table tbody");
   tbody.innerHTML = "";
-  // Use full list — index in state.transactions is the stable identifier
-  const indexed = state.transactions
-    .map((t, i) => ({ ...t, _idx: i }))
+  // Index in state.transactions stays as the stable identifier across filters
+  const all = state.transactions.map((t, i) => ({ ...t, _idx: i }));
+  const visible = (!state.activePortfolio || state.activePortfolio === "__all__")
+    ? all
+    : all.filter(t => t.action === "DEPOSIT" || (t.strategy || "gpm") === state.activePortfolio);
+  const indexed = visible
     .sort((a, b) => b.date.localeCompare(a.date))
     .slice(0, 20);
   for (const t of indexed) {
@@ -496,11 +601,12 @@ function renderTransactions() {
 function refreshSellDropdown() {
   const sel = document.getElementById("sell-ticker");
   sel.innerHTML = '<option value="">— select —</option>';
-  for (const p of state.positions) {
+  for (const p of filteredPositions()) {
     const opt = document.createElement("option");
     const key = `${p.ticker}|${p.strategy}`;
     opt.value = key;
-    opt.textContent = `${p.ticker} (${p.shares.toFixed(4).replace(/\.?0+$/, "")} shares)`;
+    const tag = state.activePortfolio === "__all__" ? ` [${p.strategy}]` : "";
+    opt.textContent = `${p.ticker}${tag} (${p.shares.toFixed(4).replace(/\.?0+$/, "")} shares)`;
     sel.appendChild(opt);
   }
 }
@@ -1314,6 +1420,7 @@ async function init() {
   setupTickerSearch();
   setupRowActions();
   setupExportModal();
+  setupPortfolioBar();
   await loadTickerIndex();
 
   if (!getToken()) {

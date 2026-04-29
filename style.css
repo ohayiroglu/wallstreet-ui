@@ -78,6 +78,38 @@ header h1 { margin: 0; font-size: 24px; font-weight: 600; }
   color: var(--gpm);
 }
 
+/* Portfolio selector bar */
+.portfolio-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 0 8px 20px 8px;
+  flex-wrap: wrap;
+}
+.portfolio-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--muted);
+}
+.portfolio-label select {
+  background: var(--card-2);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 7px 12px;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  min-width: 200px;
+}
+.portfolio-label select:focus { border-color: var(--primary); outline: none; }
+#portfolio-new {
+  font-size: 13px;
+  padding: 7px 14px;
+}
+
 /* Cards */
 .card {
   background: var(--card);
