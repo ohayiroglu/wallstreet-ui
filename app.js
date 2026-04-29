@@ -50,10 +50,11 @@ function showTokenSetup(visible) {
   document.getElementById("token-setup").classList.toggle("hidden", !visible);
 }
 
-// ---------- Live prices (Yahoo Finance v8 chart API) ----------
-// CORS-friendly endpoint that returns regularMarketPrice + 52w range + day high/low.
-// Falls through gracefully if Yahoo blocks CORS in some browsers — we just lose
-// MTM that session, never crash the app.
+// ---------- Prices ----------
+// Two-tier strategy:
+//   1. Try Yahoo's CORS endpoint per ticker (works in some browsers/regions).
+//   2. Fall back to prices.json snapshot committed daily by the GH Actions
+//      "Daily Prices Snapshot" workflow.
 async function fetchYahooQuote(ticker) {
   const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(ticker)}?interval=1d&range=2d`;
   const res = await fetch(url, { mode: "cors" });
@@ -73,7 +74,34 @@ async function fetchYahooQuote(ticker) {
     w52High: Number(meta.fiftyTwoWeekHigh ?? 0),
     w52Low:  Number(meta.fiftyTwoWeekLow ?? 0),
     currency: meta.currency || "USD",
+    source: "yahoo",
     ts: Date.now(),
+  };
+}
+
+async function fetchPricesSnapshot() {
+  // Read prices.json from the wallstreet-state repo (auth via PAT — repo is private)
+  const txt = await ghFetchRaw("prices.json");
+  if (!txt) return null;
+  const j = JSON.parse(txt);
+  return j;
+}
+
+function quoteFromSnapshot(snapshot, ticker) {
+  const t = snapshot?.tickers?.[ticker];
+  if (!t || !t.price) return null;
+  return {
+    price: t.price,
+    prevClose: t.prev_close,
+    change: t.change,
+    changePct: t.change_pct,
+    dayHigh: t.day_high,
+    dayLow:  t.day_low,
+    w52High: t.w52_high || 0,
+    w52Low:  t.w52_low  || 0,
+    currency: t.currency || "USD",
+    source: "snapshot",
+    ts: snapshot.computed_at,
   };
 }
 
@@ -82,21 +110,47 @@ async function refreshLivePrices() {
   if (tickers.length === 0) return;
   const status = document.getElementById("prices-status");
   status.textContent = `Fetching ${tickers.length} prices...`;
-  let ok = 0, fail = 0;
+
+  let ok = 0, yahooFail = 0;
   await Promise.all(tickers.map(async t => {
     try {
       state.livePrices[t] = await fetchYahooQuote(t);
       ok++;
     } catch (e) {
-      console.error("price fetch failed:", t, e);
-      fail++;
+      yahooFail++;
     }
   }));
+
+  // Fill any gap from the daily snapshot
+  let snapshotInfo = null;
+  if (yahooFail > 0) {
+    try {
+      const snap = await fetchPricesSnapshot();
+      if (snap) {
+        snapshotInfo = snap;
+        for (const t of tickers) {
+          if (!state.livePrices[t]) {
+            const q = quoteFromSnapshot(snap, t);
+            if (q) { state.livePrices[t] = q; ok++; }
+          }
+        }
+      }
+    } catch (e) {
+      console.error("snapshot fetch:", e);
+    }
+  }
+
   state.pricesLoadedAt = Date.now();
+  const haveLive = Object.values(state.livePrices).some(q => q.source === "yahoo");
+  const haveSnap = Object.values(state.livePrices).some(q => q.source === "snapshot");
   const when = new Date().toLocaleTimeString();
-  status.textContent = ok === tickers.length
-    ? `Live prices loaded ${when} (${ok})`
-    : `Loaded ${ok}/${tickers.length} prices ${when} — ${fail} failed (CORS or symbol unknown)`;
+  let label = `${ok}/${tickers.length} loaded ${when}`;
+  if (haveLive && haveSnap) label += " — mixed (Yahoo + snapshot)";
+  else if (haveLive) label += " — live (Yahoo)";
+  else if (haveSnap && snapshotInfo) {
+    label = `${ok}/${tickers.length} from daily snapshot — asof ${snapshotInfo.asof}`;
+  } else if (ok === 0) label = `Could not load prices (Yahoo CORS blocked, snapshot empty)`;
+  status.textContent = label;
   renderPortfolio();
 }
 
@@ -173,14 +227,40 @@ async function ghCommitMultiFile(filesMap, message) {
 }
 
 // ---------- CSV utilities ----------
+// Robust parser: handles UTF-8 BOM, quoted fields, embedded commas, and
+// the "" escape-quote sequence. Trade Republic + Parqet exports use this
+// dialect (e.g. description fields contain commas inside quotes).
 function csvParse(text) {
-  const lines = text.trim().split(/\r?\n/);
+  if (text.charCodeAt(0) === 0xFEFF) text = text.slice(1);  // strip BOM
+  const lines = text.split(/\r?\n/).filter(l => l.length > 0);
   if (lines.length === 0) return { headers: [], rows: [] };
-  const headers = lines[0].split(",").map(h => h.trim());
-  const rows = lines.slice(1).filter(l => l.trim()).map(l => {
-    const cols = l.split(",");
+
+  const parseLine = (line) => {
+    const cells = [];
+    let cur = "";
+    let inQuote = false;
+    for (let i = 0; i < line.length; i++) {
+      const c = line[i];
+      if (inQuote) {
+        if (c === '"') {
+          if (line[i + 1] === '"') { cur += '"'; i++; }   // "" escape
+          else inQuote = false;
+        } else cur += c;
+      } else {
+        if (c === '"') inQuote = true;
+        else if (c === ",") { cells.push(cur); cur = ""; }
+        else cur += c;
+      }
+    }
+    cells.push(cur);
+    return cells.map(c => c.trim());
+  };
+
+  const headers = parseLine(lines[0]);
+  const rows = lines.slice(1).map(line => {
+    const cols = parseLine(line);
     const obj = {};
-    headers.forEach((h, i) => obj[h] = (cols[i] || "").trim());
+    headers.forEach((h, i) => obj[h] = cols[i] || "");
     return obj;
   });
   return { headers, rows };
@@ -663,41 +743,77 @@ function parseImportCsv(text, strategy) {
     if (c) colMap[c] = i;
   });
 
+  // Trade Republic uses both `category` (TRADING / CORPORATE_ACTION) and
+  // `type` (BUY / SELL / REVERSE_SPLIT). We want only TRADING / BUY|SELL.
+  // Find category column by scanning normalized headers for "category".
+  const categoryColIdx = headers.findIndex(h =>
+    h.toLowerCase().replace(/[^a-z0-9_]/g, "_").replace(/^_+|_+$/g, "") === "category");
+  const isBuyish  = (a) => ["BUY", "PURCHASE", "ALIM"].includes(a) || a === "B";
+  const isSellish = (a) => ["SELL", "SALE", "SATIS"].includes(a) || a === "S";
+
   const out = [];
+  let skippedNonTrade = 0, skippedBadData = 0;
   for (const r of rows) {
-    const action = (r[Object.keys(r)[colMap.action]] || "").toUpperCase().trim();
-    const isBuy = ["BUY", "B", "PURCHASE", "ALIM"].some(a => action.includes(a));
-    const isSell = ["SELL", "S", "SALE", "SATIS"].some(a => action.includes(a));
-    if (!isBuy && !isSell) continue;
-    const ticker = (r[Object.keys(r)[colMap.ticker]] || "").toUpperCase().trim();
-    if (!ticker) continue;
-    const shares = parseFloat(r[Object.keys(r)[colMap.shares]] || "0");
-    const price = parseFloat(r[Object.keys(r)[colMap.price]] || "0");
-    if (!shares || !price) continue;
-    let date = r[Object.keys(r)[colMap.date]] || todayIso();
+    if (categoryColIdx >= 0) {
+      const cat = (r[headers[categoryColIdx]] || "").toUpperCase().trim();
+      if (cat && cat !== "TRADING") { skippedNonTrade++; continue; }
+    }
+    const action = (r[headers[colMap.action]] || "").toUpperCase().trim();
+    const isBuy = isBuyish(action);
+    const isSell = isSellish(action);
+    if (!isBuy && !isSell) { skippedNonTrade++; continue; }
+
+    const tickerOrIsin = (r[headers[colMap.ticker]] || "").toUpperCase().trim();
+    if (!tickerOrIsin) { skippedBadData++; continue; }
+
+    const sharesRaw = parseFloat(r[headers[colMap.shares]] || "0");
+    const price = parseFloat(r[headers[colMap.price]] || "0");
+    if (!sharesRaw || !price) { skippedBadData++; continue; }
+    const shares = Math.abs(sharesRaw);   // T212 emits negative shares for SELL
+
+    let date = r[headers[colMap.date]] || todayIso();
     date = date.split("T")[0].replace(/[./]/g, "-");
     if (/^\d{2}-\d{2}-\d{4}$/.test(date)) {
       const [d, m, y] = date.split("-");
       date = `${y}-${m}-${d}`;
     }
+
     out.push({
-      date, action: isBuy ? "BUY" : "SELL",
-      ticker, shares, price, amount: shares * price,
+      date,
+      action: isBuy ? "BUY" : "SELL",
+      ticker: tickerOrIsin,
+      shares,
+      price,
+      amount: shares * price,
       strategy,
     });
   }
+  // Stash diagnostics for the preview UI
+  out._diag = { totalRows: rows.length, kept: out.length, skippedNonTrade, skippedBadData };
   return out;
 }
 
 function previewCsv(rows) {
   const div = document.getElementById("csv-preview");
+  const submitBtn = document.getElementById("csv-submit");
+  const d = rows && rows._diag;
   if (!rows || rows.length === 0) {
-    div.innerHTML = '<p class="muted">No processable rows found.</p>';
-    document.getElementById("csv-submit").classList.add("hidden");
+    let msg = `<p class="muted">No BUY/SELL rows detected.`;
+    if (d) {
+      msg += ` Parsed <strong>${d.totalRows}</strong> rows total —
+        skipped <strong>${d.skippedNonTrade}</strong> non-trade rows
+        (DEPOSIT, REVERSE_SPLIT, etc.) and
+        <strong>${d.skippedBadData}</strong> rows with missing ticker / shares / price.`;
+    }
+    msg += `</p>`;
+    div.innerHTML = msg;
+    submitBtn.classList.add("hidden");
     return;
   }
-  const stratLabel = (rows[0] && rows[0].strategy ? rows[0].strategy.toUpperCase() : "GPM");
-  div.innerHTML = `<p class="muted">Tagging all rows as <strong>${stratLabel}</strong>.</p>` +
+  let header = `<p class="muted">Importing <strong>${rows.length}</strong> trade(s)`;
+  if (d && d.skippedNonTrade) header += ` (skipped ${d.skippedNonTrade} non-trade rows)`;
+  header += `.</p>`;
+  div.innerHTML = header +
     '<div class="preview-row header"><div>Date</div><div>Action</div><div>Ticker</div><div>Shares</div><div>Price</div><div>Amount</div></div>';
   for (const r of rows) {
     const row = document.createElement("div");
@@ -711,7 +827,8 @@ function previewCsv(rows) {
       <div>${fmtMoney(r.amount)}</div>`;
     div.appendChild(row);
   }
-  document.getElementById("csv-submit").classList.remove("hidden");
+  submitBtn.classList.remove("hidden");
+  submitBtn.textContent = `Confirm and Commit (${rows.length})`;
 }
 
 async function commitCsvImport() {
@@ -1084,9 +1201,22 @@ async function init() {
   document.getElementById("csv-file").addEventListener("change", async (e) => {
     const f = e.target.files[0];
     if (!f) return;
-    const text = await f.text();
-    state.pendingCsvRows = parseImportCsv(text, csvStrategySelected());
-    previewCsv(state.pendingCsvRows);
+    try {
+      const text = await f.text();
+      state.pendingCsvRows = parseImportCsv(text, csvStrategySelected());
+      previewCsv(state.pendingCsvRows);
+      if (state.pendingCsvRows.length === 0) {
+        toast(`No trades found in ${f.name}`, "bad");
+      } else {
+        toast(`Detected ${state.pendingCsvRows.length} trades — review and commit`, "good");
+      }
+    } catch (err) {
+      console.error("CSV parse:", err);
+      toast("CSV parse error: " + (err.message || err), "bad");
+      document.getElementById("csv-preview").innerHTML =
+        `<p class="muted">Parse failed: ${err.message || err}</p>`;
+      document.getElementById("csv-submit").classList.add("hidden");
+    }
   });
 
   // Default dates to today
