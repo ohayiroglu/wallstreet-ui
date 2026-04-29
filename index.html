@@ -21,6 +21,8 @@
       </select>
     </label>
     <button id="portfolio-new" class="muted-btn">+ New portfolio</button>
+    <button id="portfolio-rename" class="muted-btn" title="Rename selected portfolio">✏️ Rename</button>
+    <button id="portfolio-delete" class="muted-btn" title="Delete selected portfolio">🗑️ Delete</button>
     <span id="portfolio-meta" class="muted" style="font-size:12px;"></span>
   </nav>
 
@@ -198,6 +200,28 @@
       <div class="modal-actions">
         <button class="muted-btn" data-act="newport-cancel">Cancel</button>
         <button class="primary" data-act="newport-create">Create</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Rename portfolio modal -->
+  <div id="renameport-modal" class="modal hidden">
+    <div class="modal-backdrop" data-act="renameport-cancel"></div>
+    <div class="modal-card" style="width:480px;">
+      <h2>✏️ Rename portfolio</h2>
+      <p class="muted">Renaming updates all positions and transactions tagged under this portfolio. Two commits will be pushed to <code>wallstreet-state</code>.</p>
+      <div class="form-row">
+        <label>Old name:
+          <input type="text" id="renameport-old" disabled>
+        </label>
+        <label>New name:
+          <input type="text" id="renameport-new" placeholder="e.g. Cansu_TradeRepublic" autocomplete="off" maxlength="40">
+        </label>
+      </div>
+      <p class="muted" style="font-size:12px;margin-top:0;">Letters / digits / dashes / underscores. Currency is preserved.</p>
+      <div class="modal-actions">
+        <button class="muted-btn" data-act="renameport-cancel">Cancel</button>
+        <button class="primary" data-act="renameport-save">Rename</button>
       </div>
     </div>
   </div>

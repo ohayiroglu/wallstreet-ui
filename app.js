@@ -244,6 +244,22 @@ function setupPortfolioBar() {
     document.getElementById("newport-modal").classList.remove("hidden");
     setTimeout(() => document.getElementById("newport-name").focus(), 50);
   });
+  document.getElementById("portfolio-rename").addEventListener("click", () => {
+    const cur = state.activePortfolio;
+    if (!cur || cur === "__all__") {
+      toast("Select a specific portfolio to rename (not 'All portfolios')", "bad");
+      return;
+    }
+    document.getElementById("renameport-old").value = cur;
+    document.getElementById("renameport-new").value = cur;
+    document.getElementById("renameport-modal").classList.remove("hidden");
+    setTimeout(() => {
+      const inp = document.getElementById("renameport-new");
+      inp.focus();
+      inp.select();
+    }, 50);
+  });
+  document.getElementById("portfolio-delete").addEventListener("click", deletePortfolio);
   // Modal handlers via delegated click
   document.addEventListener("click", (e) => {
     const btn = e.target.closest("[data-act]");
@@ -271,8 +287,119 @@ function setupPortfolioBar() {
       setActivePortfolio(name);
       const sym = currency === "EUR" ? "€" : "$";
       toast(`Portfolio "${name}" (${sym}${currency}) ready — log a buy to populate`, "good");
+    } else if (btn.dataset.act === "renameport-cancel") {
+      document.getElementById("renameport-modal").classList.add("hidden");
+    } else if (btn.dataset.act === "renameport-save") {
+      renamePortfolio();
     }
   });
+}
+
+async function renamePortfolio() {
+  const oldName = document.getElementById("renameport-old").value;
+  const newName = (document.getElementById("renameport-new").value || "").trim();
+  if (!isValidPortfolioName(newName)) {
+    toast("Letters / digits / dashes / underscores (max 40 chars, must start with letter/digit)", "bad");
+    return;
+  }
+  if (newName === oldName) {
+    toast("New name is the same as the old one", "bad");
+    return;
+  }
+  if (state.portfolios.includes(newName)) {
+    toast(`"${newName}" already exists`, "bad");
+    return;
+  }
+  if (oldName === "gpm") {
+    if (!confirm(`Rename the system-managed "gpm" bucket? Future rebal-signal mails still tag new buys as "gpm" — your renamed bucket will get out of sync. Are you sure?`)) return;
+  }
+  if (!getToken()) { showTokenSetup(true); toast("Add token first", "bad"); return; }
+
+  // Update positions + transactions in-memory
+  const newPositions = state.positions.map(p =>
+    (p.strategy === oldName) ? { ...p, strategy: newName } : p);
+  const newTxns = state.transactions.map(t =>
+    (t.strategy === oldName) ? { ...t, strategy: newName } : t);
+
+  const nPos = newPositions.filter(p => p.strategy === newName).length;
+  const nTxn = newTxns.filter(t => t.strategy === newName).length;
+
+  const posCsv = serializePositions(newPositions);
+  const txnsCsv = serializeTransactions(newTxns);
+  try {
+    await ghCommitMultiFile({
+      "positions.csv": posCsv,
+      "transactions.csv": txnsCsv,
+    }, `Rename portfolio "${oldName}" → "${newName}" (${nPos} pos, ${nTxn} txn)`);
+    state.positions = newPositions;
+    state.transactions = newTxns;
+
+    // Move portfolioMeta entry
+    if (state.portfolioMeta?.[oldName]) {
+      state.portfolioMeta[newName] = state.portfolioMeta[oldName];
+      delete state.portfolioMeta[oldName];
+      localStorage.setItem("ws_portfolio_meta", JSON.stringify(state.portfolioMeta));
+    }
+
+    rebuildPortfolioList();
+    document.getElementById("renameport-modal").classList.add("hidden");
+    setActivePortfolio(newName);
+    toast(`Renamed "${oldName}" → "${newName}" (${nPos} pos, ${nTxn} txn updated)`, "good");
+  } catch (e) {
+    toast("Rename failed: " + e.message, "bad");
+  }
+}
+
+async function deletePortfolio() {
+  const cur = state.activePortfolio;
+  if (!cur || cur === "__all__") {
+    toast("Select a specific portfolio to delete (not 'All portfolios')", "bad");
+    return;
+  }
+  if (cur === "gpm") {
+    toast(`"gpm" is the system-managed default bucket — can't delete`, "bad");
+    return;
+  }
+  const nPos = state.positions.filter(p => p.strategy === cur).length;
+  const nTxn = state.transactions.filter(t => t.strategy === cur).length;
+  if (nPos > 0 || nTxn > 0) {
+    if (!confirm(`Delete portfolio "${cur}"? This removes ${nPos} position(s) AND ${nTxn} transaction(s) PERMANENTLY from positions.csv + transactions.csv. Type the portfolio name in the next prompt to confirm.`)) return;
+    const typed = prompt(`Type "${cur}" to confirm permanent deletion:`);
+    if (typed !== cur) {
+      toast("Confirmation didn't match — delete cancelled", "bad");
+      return;
+    }
+  } else {
+    if (!confirm(`Delete empty portfolio "${cur}"? (No positions or transactions to remove.)`)) return;
+  }
+  if (!getToken()) { showTokenSetup(true); toast("Add token first", "bad"); return; }
+
+  const newPositions = state.positions.filter(p => p.strategy !== cur);
+  const newTxns = state.transactions.filter(t => t.strategy !== cur);
+
+  try {
+    if (nPos > 0 || nTxn > 0) {
+      const posCsv = serializePositions(newPositions);
+      const txnsCsv = serializeTransactions(newTxns);
+      await ghCommitMultiFile({
+        "positions.csv": posCsv,
+        "transactions.csv": txnsCsv,
+      }, `Delete portfolio "${cur}" (${nPos} pos, ${nTxn} txn removed)`);
+    }
+    state.positions = newPositions;
+    state.transactions = newTxns;
+
+    if (state.portfolioMeta?.[cur]) {
+      delete state.portfolioMeta[cur];
+      localStorage.setItem("ws_portfolio_meta", JSON.stringify(state.portfolioMeta));
+    }
+
+    rebuildPortfolioList();
+    setActivePortfolio("__all__");
+    toast(`Deleted portfolio "${cur}"${nPos || nTxn ? ` (${nPos} pos, ${nTxn} txn removed)` : ""}`, "good");
+  } catch (e) {
+    toast("Delete failed: " + e.message, "bad");
+  }
 }
 
 // ---------- GitHub API ----------
