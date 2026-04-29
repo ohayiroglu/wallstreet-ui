@@ -148,10 +148,22 @@
     <div class="tab-content" data-tab="csv">
       <h3>CSV Import</h3>
       <p class="muted">
-        Upload a T212 or Parqet export. BUY/SELL rows are auto-detected and tagged as <strong>GPM</strong>.
-        Column names are flexible; "Action / Ticker / Shares / Price / Date" variants are supported.
+        Pick the export format. BUY/SELL rows are tagged with the currently active portfolio.
       </p>
-      <input type="file" id="csv-file" accept=".csv">
+      <div style="display:flex; gap:12px; flex-wrap:wrap; margin-bottom:12px;">
+        <label class="muted-btn" style="cursor:pointer;">
+          📊 T212 / Parqet / Generic CSV
+          <input type="file" id="csv-file" accept=".csv" style="display:none;">
+        </label>
+        <label class="muted-btn" style="cursor:pointer;">
+          🇩🇪 Trade Republic CSV (EUR)
+          <input type="file" id="csv-file-tr" accept=".csv" style="display:none;">
+        </label>
+      </div>
+      <p class="muted" style="font-size:12px;">
+        <strong>T212/Generic</strong>: column-name agnostic, supports T212/Parqet exports.
+        <strong>Trade Republic</strong>: handles TR's specific layout (datetime, symbol=ISIN, EUR amounts) and filters out CASH/CORPORATE_ACTION rows.
+      </p>
       <div id="csv-preview"></div>
       <button id="csv-submit" class="primary hidden">Confirm and Commit</button>
     </div>

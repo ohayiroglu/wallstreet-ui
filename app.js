@@ -1019,6 +1019,57 @@ function normalizeHeader(h) {
   return null;
 }
 
+// Dedicated Trade Republic parser. TR's CSV has fixed columns (datetime, date,
+// account_type, category, type, asset_class, name, symbol, shares, price,
+// amount, fee, ...). We only keep TRADING/BUY|SELL rows, use `symbol` as the
+// ISIN-as-ticker, and treat all amounts as EUR-positive (TR signs amount by
+// flow direction; we normalize to absolute).
+function parseTradeRepublicCsv(text, strategy) {
+  const { headers, rows } = csvParse(text);
+  const idx = (name) => headers.findIndex(h =>
+    h.toLowerCase().replace(/[^a-z0-9]/g, "") === name.toLowerCase().replace(/[^a-z0-9]/g, ""));
+  const colDate     = idx("date");
+  const colCategory = idx("category");
+  const colType     = idx("type");
+  const colSymbol   = idx("symbol");
+  const colShares   = idx("shares");
+  const colPrice    = idx("price");
+  const colAmount   = idx("amount");
+
+  const out = [];
+  let skippedNonTrade = 0, skippedBadData = 0;
+  for (const r of rows) {
+    const cat = (r[headers[colCategory]] || "").toUpperCase().trim();
+    if (cat !== "TRADING") { skippedNonTrade++; continue; }
+    const t = (r[headers[colType]] || "").toUpperCase().trim();
+    if (t !== "BUY" && t !== "SELL") { skippedNonTrade++; continue; }
+
+    const isin = (r[headers[colSymbol]] || "").toUpperCase().trim();
+    if (!isin) { skippedBadData++; continue; }
+
+    const sharesRaw = parseFloat(r[headers[colShares]] || "0");
+    const price = parseFloat(r[headers[colPrice]] || "0");
+    if (!sharesRaw || !price) { skippedBadData++; continue; }
+    const shares = Math.abs(sharesRaw);
+    const amount = Math.abs(parseFloat(r[headers[colAmount]] || "0")) || (shares * price);
+
+    let date = (r[headers[colDate]] || todayIso()).split(/[T ]/)[0];
+
+    out.push({
+      date,
+      action: t,
+      ticker: isin,   // use ISIN as ticker (no separate ticker field in TR exports)
+      isin,
+      shares,
+      price,
+      amount,
+      strategy,
+    });
+  }
+  out._diag = { totalRows: rows.length, kept: out.length, skippedNonTrade, skippedBadData };
+  return out;
+}
+
 function parseImportCsv(text, strategy) {
   const { headers, rows } = csvParse(text);
   const colMap = {};
@@ -1618,7 +1669,8 @@ async function init() {
     document.getElementById(id).addEventListener("input", updateSellSummary));
   document.getElementById("sell-ticker").addEventListener("change", updateSellSummary);
 
-  document.getElementById("csv-file").addEventListener("change", async (e) => {
+  // Generic / T212 / Parqet CSV import (column-name agnostic)
+  const handleCsvUpload = async (e, parser, label) => {
     const f = e.target.files[0];
     if (!f) return;
     const csvStrategy = csvStrategySelected();
@@ -1629,12 +1681,12 @@ async function init() {
     }
     try {
       const text = await f.text();
-      state.pendingCsvRows = parseImportCsv(text, csvStrategy);
+      state.pendingCsvRows = parser(text, csvStrategy);
       previewCsv(state.pendingCsvRows);
       if (state.pendingCsvRows.length === 0) {
-        toast(`No trades found in ${f.name}`, "bad");
+        toast(`No trades found in ${f.name} (${label})`, "bad");
       } else {
-        toast(`Detected ${state.pendingCsvRows.length} trades — review and commit`, "good");
+        toast(`${label}: ${state.pendingCsvRows.length} trades → ${csvStrategy} — review and commit`, "good");
       }
     } catch (err) {
       console.error("CSV parse:", err);
@@ -1643,7 +1695,11 @@ async function init() {
         `<p class="muted">Parse failed: ${err.message || err}</p>`;
       document.getElementById("csv-submit").classList.add("hidden");
     }
-  });
+  };
+  document.getElementById("csv-file").addEventListener("change", (e) =>
+    handleCsvUpload(e, parseImportCsv, "T212/Generic"));
+  document.getElementById("csv-file-tr").addEventListener("change", (e) =>
+    handleCsvUpload(e, parseTradeRepublicCsv, "Trade Republic"));
 
   // Default dates to today
   const today = todayIso();
