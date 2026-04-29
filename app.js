@@ -173,11 +173,15 @@ async function refreshLivePrices() {
 // The CSV `strategy` column doubles as portfolio bucket. "gpm" = system,
 // anything else = user-created (e.g. "personal-picks"). Never empty.
 function normalizeStrategy(s) {
-  const v = (s || "").toString().trim().toLowerCase();
+  // Trim whitespace; preserve case (user-facing names like "Cansu_TradeRepublic"
+  // should display as typed). Comparisons throughout the app are case-sensitive.
+  const v = (s || "").toString().trim();
   return v || "gpm";
 }
 function isValidPortfolioName(s) {
-  return /^[a-z0-9][a-z0-9-]{0,39}$/.test(s);
+  // Letters (A-Z, a-z), digits, dashes, underscores. Must start with letter/digit.
+  // Max 40 chars.
+  return /^[A-Za-z0-9][A-Za-z0-9_-]{0,39}$/.test(s);
 }
 // Returns the portfolio that NEW transactions should be tagged with.
 // "__all__" is a UI-only filter, never a real bucket — fall back to gpm.
@@ -248,10 +252,10 @@ function setupPortfolioBar() {
       document.getElementById("newport-modal").classList.add("hidden");
     } else if (btn.dataset.act === "newport-create") {
       const name = (document.getElementById("newport-name").value || "")
-        .trim().toLowerCase();
+        .trim();
       const currency = document.getElementById("newport-currency").value || "USD";
       if (!isValidPortfolioName(name)) {
-        toast("Use lowercase letters/digits/dashes (max 40 chars, must start with letter/digit)", "bad");
+        toast("Letters / digits / dashes / underscores (max 40 chars, must start with letter/digit)", "bad");
         return;
       }
       if (state.portfolios.includes(name)) {
