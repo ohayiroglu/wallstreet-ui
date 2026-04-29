@@ -771,6 +771,7 @@ async function loadTickerIndex() {
 
 // ISIN→ticker map for European brokers (Trade Republic etc.). Loaded once on
 // startup; consulted by the TR CSV parser to resolve ISINs to display tickers.
+// Lookup order: static map → localStorage cache → OpenFIGI API → ISIN fallback.
 let ISIN_MAP = {};
 async function loadIsinMap() {
   try {
@@ -782,6 +783,76 @@ async function loadIsinMap() {
   } catch {
     ISIN_MAP = {};
   }
+}
+
+// Persistent cache of OpenFIGI-resolved ISINs, so we only call the API the
+// first time we encounter each unmapped ISIN.
+const ISIN_CACHE_KEY = "ws_isin_cache";
+let isinCache = (() => {
+  try { return JSON.parse(localStorage.getItem(ISIN_CACHE_KEY) || "{}"); }
+  catch { return {}; }
+})();
+function saveIsinCache() {
+  try { localStorage.setItem(ISIN_CACHE_KEY, JSON.stringify(isinCache)); } catch {}
+}
+
+// Batch-resolve unknown ISINs via OpenFIGI (anonymous tier: 5 ISINs/request,
+// 25 req/min). Returns count of newly resolved entries (cached for next time).
+// OpenFIGI returns multiple listings per ISIN — we prefer US exchanges
+// (NYSE/Nasdaq) so global tickers display by their familiar US symbol.
+async function batchResolveIsinsViaOpenFigi(isins) {
+  const unknowns = [...new Set(isins.filter(i =>
+    i && !ISIN_MAP[i] && !isinCache[i]))];
+  if (unknowns.length === 0) return 0;
+
+  const BATCH_SIZE = 5;  // anonymous tier limit
+  const US_EXCHANGES = new Set(["UN", "US", "UQ", "UA", "UR", "UW", "UF", "UV", "UD", "UP"]);
+  let resolved = 0;
+  for (let i = 0; i < unknowns.length; i += BATCH_SIZE) {
+    const batch = unknowns.slice(i, i + BATCH_SIZE);
+    try {
+      const res = await fetch("https://api.openfigi.com/v3/mapping", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(batch.map(isin =>
+          ({ idType: "ID_ISIN", idValue: isin }))),
+      });
+      if (!res.ok) {
+        console.warn(`OpenFIGI ${res.status}: skipping batch`, batch);
+        if (res.status === 429) break;  // rate limited — bail
+        continue;
+      }
+      const data = await res.json();
+      data.forEach((result, idx) => {
+        const isin = batch[idx];
+        if (!result.data || !result.data.length) return;
+        const entries = result.data;
+        const usListing = entries.find(e => US_EXCHANGES.has(e.exchCode));
+        const pick = usListing || entries[0];
+        if (!pick.ticker) return;
+        // OpenFIGI's securityType is granular (Common Stock, ETF, ADR, …).
+        // We bucket into our standard sectors as best-effort; for accurate
+        // GICS sector, rely on the static ISIN_MAP or ticker_index.
+        let sector = "Other";
+        const st = (pick.securityType || "").toLowerCase();
+        if (st.includes("etf") || st.includes("fund") || st.includes("trust")) sector = "ETF";
+        isinCache[isin] = {
+          ticker: pick.ticker.replace("/", "."),  // BRK/B → BRK.B style
+          name: pick.name || pick.securityName || "",
+          sector,
+        };
+        resolved++;
+      });
+    } catch (err) {
+      console.warn("OpenFIGI batch failed:", err);
+    }
+  }
+  if (resolved > 0) saveIsinCache();
+  return resolved;
+}
+
+function resolveIsinSync(isin) {
+  return ISIN_MAP[isin] || isinCache[isin] || null;
 }
 
 function searchTickers(q) {
@@ -1070,8 +1141,10 @@ function parseTradeRepublicCsv(text, strategy) {
 
     let date = (r[headers[colDate]] || todayIso()).split(/[T ]/)[0];
 
-    // Resolve ISIN → ticker via the static map (falls back to ISIN if unmapped)
-    const mapped = ISIN_MAP[isin];
+    // Resolve ISIN → ticker (static map → localStorage cache → fallback ISIN)
+    // OpenFIGI lookup happens at the upload-handler layer (async) before this
+    // so the cache is already populated by the time we get here.
+    const mapped = resolveIsinSync(isin);
     const ticker = mapped?.ticker || isin;
 
     out.push({
@@ -1688,8 +1761,11 @@ async function init() {
     document.getElementById(id).addEventListener("input", updateSellSummary));
   document.getElementById("sell-ticker").addEventListener("change", updateSellSummary);
 
-  // Generic / T212 / Parqet CSV import (column-name agnostic)
-  const handleCsvUpload = async (e, parser, label) => {
+  // CSV upload handler. Both parsers (T212/Generic and TR) feed through here.
+  // The TR path also pre-resolves any unknown ISINs via OpenFIGI (anonymous
+  // tier — no API key needed) before previewing, so unmapped instruments
+  // display by their proper ticker instead of cryptic ISIN codes.
+  const handleCsvUpload = async (e, parser, label, opts = {}) => {
     const f = e.target.files[0];
     if (!f) return;
     const csvStrategy = csvStrategySelected();
@@ -1700,6 +1776,19 @@ async function init() {
     }
     try {
       const text = await f.text();
+
+      if (opts.openFigi) {
+        // Sniff CSV for ISINs and pre-warm the cache so the parser can
+        // emit proper tickers instead of ISIN literals.
+        const isinPattern = /\b[A-Z]{2}[A-Z0-9]{9}[0-9]\b/g;
+        const isinsInFile = [...new Set((text.match(isinPattern) || [])
+          .map(s => s.toUpperCase()))];
+        const newCount = await batchResolveIsinsViaOpenFigi(isinsInFile);
+        if (newCount > 0) {
+          toast(`Resolved ${newCount} new ISIN(s) via OpenFIGI`, "good");
+        }
+      }
+
       state.pendingCsvRows = parser(text, csvStrategy);
       previewCsv(state.pendingCsvRows);
       if (state.pendingCsvRows.length === 0) {
@@ -1718,7 +1807,7 @@ async function init() {
   document.getElementById("csv-file").addEventListener("change", (e) =>
     handleCsvUpload(e, parseImportCsv, "T212/Generic"));
   document.getElementById("csv-file-tr").addEventListener("change", (e) =>
-    handleCsvUpload(e, parseTradeRepublicCsv, "Trade Republic"));
+    handleCsvUpload(e, parseTradeRepublicCsv, "Trade Republic", { openFigi: true }));
 
   // Default dates to today
   const today = todayIso();
