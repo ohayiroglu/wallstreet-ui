@@ -7,7 +7,10 @@ const BRANCH = "main";
 const RAW_BASE = `https://raw.githubusercontent.com/${REPO}/${BRANCH}/`;
 const API_BASE = `https://api.github.com/repos/${REPO}`;
 
-// In-memory state
+// In-memory state. Cash management was removed from the UI on 2026-04-29:
+// GPM auto-sizes the buy amount and the user manages USD directly in T212,
+// so an "Add Cash" form was just noise. We still load cash.json (DCF strategy
+// needs it), but Buy/Sell no longer mutate it from the UI.
 const state = {
   cash: { cash: 0, total_contributed: 0, last_contribution_date: null },
   positions: [],   // [{ticker, shares, cost_basis, first_buy_date, sector, strategy}]
@@ -281,15 +284,13 @@ function renderPortfolio() {
     emptyEl.classList.add("hidden");
   }
 
-  // Stats: split by strategy
+  // Stats: split by strategy (cash & contributed removed from UI 2026-04-29)
   const dcfCost = state.positions.filter(p => p.strategy === "dcf").reduce((s, p) => s + p.cost_basis, 0);
   const gpmCost = state.positions.filter(p => p.strategy === "gpm").reduce((s, p) => s + p.cost_basis, 0);
   const totalCost = dcfCost + gpmCost;
-  document.getElementById("cash-balance").textContent = fmtMoney(state.cash.cash);
   document.getElementById("dcf-value").textContent = fmtMoney(dcfCost);
   document.getElementById("gpm-value").textContent = fmtMoney(gpmCost);
-  document.getElementById("total-value").textContent = fmtMoney(totalCost + state.cash.cash);
-  document.getElementById("total-contributed").textContent = fmtMoney(state.cash.total_contributed);
+  document.getElementById("total-value").textContent = fmtMoney(totalCost);
 
   // Title reflects active strategy
   const title = document.getElementById("portfolio-title");
@@ -407,7 +408,7 @@ function updateBuySummary() {
   const sum = document.getElementById("buy-summary");
   if (t && s && p) {
     const total = s * p;
-    sum.textContent = `Total: ${fmtMoney(total)} • Cash after: ${fmtMoney(state.cash.cash - total)}`;
+    sum.textContent = `Total: ${fmtMoney(total)}`;
   } else {
     sum.textContent = "";
   }
@@ -452,43 +453,6 @@ function todayIso() {
   return d.toISOString().slice(0, 10);
 }
 
-async function submitCash() {
-  const amt = parseFloat(document.getElementById("cash-amount").value);
-  const date = document.getElementById("cash-date").value || todayIso();
-  if (!amt || amt <= 0) { toast("Enter a valid amount", "bad"); return; }
-  if (!getToken()) { showTokenSetup(true); toast("Add token first", "bad"); return; }
-
-  const newCash = { ...state.cash };
-  newCash.cash = (newCash.cash || 0) + amt;
-  newCash.total_contributed = (newCash.total_contributed || 0) + amt;
-  newCash.last_contribution_date = date;
-
-  const newTxns = [...state.transactions, {
-    date, action: "DEPOSIT", ticker: "", shares: 0, price: 0, amount: amt, strategy: "",
-  }];
-
-  const txnsCsv = serializeTransactions(newTxns);
-
-  const btn = document.getElementById("cash-submit");
-  btn.disabled = true; btn.textContent = "Commit...";
-  try {
-    await ghCommitMultiFile({
-      "cash.json": JSON.stringify(newCash, null, 2) + "\n",
-      "transactions.csv": txnsCsv,
-    }, `Cash deposit: $${amt.toFixed(2)} on ${date}`);
-    state.cash = newCash;
-    state.transactions = newTxns;
-    document.getElementById("cash-amount").value = "";
-    renderPortfolio();
-    renderTransactions();
-    toast(`+${fmtMoney(amt)} added`, "good");
-  } catch (e) {
-    toast("Commit error: " + e.message, "bad");
-  } finally {
-    btn.disabled = false; btn.textContent = "Add Cash";
-  }
-}
-
 async function submitBuy() {
   const tk = (document.getElementById("buy-ticker").value || "").trim().toUpperCase();
   const shares = parseFloat(document.getElementById("buy-shares").value);
@@ -519,7 +483,6 @@ async function submitBuy() {
   const newTxns = [...state.transactions, {
     date, action: "BUY", ticker: tk, shares, price, amount, strategy,
   }];
-  const newCash = { ...state.cash, cash: (state.cash.cash || 0) - amount };
 
   const posCsv = serializePositions(newPositions);
   const txnsCsv = serializeTransactions(newTxns);
@@ -530,11 +493,9 @@ async function submitBuy() {
     await ghCommitMultiFile({
       "positions.csv": posCsv,
       "transactions.csv": txnsCsv,
-      "cash.json": JSON.stringify(newCash, null, 2) + "\n",
     }, `BUY ${tk} [${strategy}]: ${shares} @ $${price} on ${date}`);
     state.positions = newPositions;
     state.transactions = newTxns;
-    state.cash = newCash;
     document.getElementById("buy-shares").value = "";
     document.getElementById("buy-price").value = "";
     document.getElementById("buy-ticker").value = "";
@@ -579,7 +540,6 @@ async function submitSell() {
   const newTxns = [...state.transactions, {
     date, action: "SELL", ticker: tk, shares, price, amount: proceeds, strategy: strat,
   }];
-  const newCash = { ...state.cash, cash: (state.cash.cash || 0) + proceeds };
 
   const posCsv = serializePositions(newPositions);
   const txnsCsv = serializeTransactions(newTxns);
@@ -590,11 +550,9 @@ async function submitSell() {
     await ghCommitMultiFile({
       "positions.csv": posCsv,
       "transactions.csv": txnsCsv,
-      "cash.json": JSON.stringify(newCash, null, 2) + "\n",
     }, `SELL ${tk} [${strat}]: ${shares} @ $${price} on ${date}`);
     state.positions = newPositions;
     state.transactions = newTxns;
-    state.cash = newCash;
     document.getElementById("sell-shares").value = "";
     document.getElementById("sell-price").value = "";
     renderPortfolio();
@@ -692,7 +650,6 @@ async function commitCsvImport() {
 
   const newPositions = [...state.positions];
   const newTxns = [...state.transactions];
-  let newCash = { ...state.cash };
 
   for (const r of state.pendingCsvRows) {
     if (r.action === "BUY") {
@@ -709,7 +666,6 @@ async function commitCsvImport() {
           first_buy_date: r.date, sector, strategy: r.strategy,
         });
       }
-      newCash.cash -= r.amount;
       newTxns.push(r);
     } else if (r.action === "SELL") {
       const idx = newPositions.findIndex(p => p.ticker === r.ticker && p.strategy === r.strategy);
@@ -724,7 +680,6 @@ async function commitCsvImport() {
           pos.cost_basis -= cps * r.shares;
         }
       }
-      newCash.cash += r.amount;
       newTxns.push(r);
     }
   }
@@ -739,11 +694,9 @@ async function commitCsvImport() {
     await ghCommitMultiFile({
       "positions.csv": posCsv,
       "transactions.csv": txnsCsv,
-      "cash.json": JSON.stringify(newCash, null, 2) + "\n",
     }, `CSV import: ${importedCount} transactions`);
     state.positions = newPositions;
     state.transactions = newTxns;
-    state.cash = newCash;
     state.pendingCsvRows = null;
     document.getElementById("csv-preview").innerHTML = "";
     document.getElementById("csv-file").value = "";
@@ -790,7 +743,6 @@ async function init() {
   });
   document.getElementById("refresh-btn").addEventListener("click", loadState);
 
-  document.getElementById("cash-submit").addEventListener("click", submitCash);
   document.getElementById("buy-submit").addEventListener("click", submitBuy);
   document.getElementById("sell-submit").addEventListener("click", submitSell);
   document.getElementById("csv-submit").addEventListener("click", commitCsvImport);
@@ -811,7 +763,7 @@ async function init() {
 
   // Default dates to today
   const today = todayIso();
-  ["cash-date", "buy-date", "sell-date"].forEach(id => document.getElementById(id).value = today);
+  ["buy-date", "sell-date"].forEach(id => document.getElementById(id).value = today);
 }
 
 init();

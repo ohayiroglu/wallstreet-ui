@@ -46,11 +46,9 @@
     <div class="card-header">
       <h2 id="portfolio-title">Portfolio</h2>
       <div class="stats" id="strategy-stats">
-        <span class="stat-pill">Cash: <strong id="cash-balance">—</strong></span>
         <span class="stat-pill"><span class="dot dot-dcf"></span> DCF: <strong id="dcf-value">—</strong></span>
         <span class="stat-pill"><span class="dot dot-gpm"></span> GPM: <strong id="gpm-value">—</strong></span>
         <span class="stat-pill total">Total: <strong id="total-value">—</strong></span>
-        <span class="stat-pill muted-pill">Contributed: <strong id="total-contributed">—</strong></span>
       </div>
     </div>
     <table id="positions-table">
@@ -74,29 +72,13 @@
   <!-- Action tabs -->
   <section class="card">
     <div class="tabs">
-      <button class="tab-btn active" data-tab="cash">💰 Add Cash</button>
-      <button class="tab-btn" data-tab="buy">🛒 Buy</button>
+      <button class="tab-btn active" data-tab="buy">🛒 Buy</button>
       <button class="tab-btn" data-tab="sell">📤 Sell</button>
       <button class="tab-btn" data-tab="csv">📁 CSV Import</button>
     </div>
 
-    <!-- Cash tab -->
-    <div class="tab-content active" data-tab="cash">
-      <h3>Deposit Cash</h3>
-      <div class="form-row">
-        <label>Amount (USD):
-          <input type="number" id="cash-amount" placeholder="1000" step="0.01">
-        </label>
-        <label>Date:
-          <input type="date" id="cash-date">
-        </label>
-      </div>
-      <button id="cash-submit" class="primary">Add Cash</button>
-      <p class="muted">Adds the amount to <code>cash.json</code> and writes a "DEPOSIT" row to <code>transactions.csv</code>. Cash pool is shared across DCF and GPM strategies.</p>
-    </div>
-
     <!-- Buy tab -->
-    <div class="tab-content" data-tab="buy">
+    <div class="tab-content active" data-tab="buy">
       <h3>Buy</h3>
       <div class="form-row">
         <fieldset class="strategy-fieldset">
