@@ -1,7 +1,8 @@
 // Investment Portfolio — static GitHub Pages app
 // Reads/writes positions.csv, transactions.csv on github.com/ohayiroglu/wallstreet-state via the GitHub API.
-// Single-strategy UI (GPM canonical 2026-04-29). The strategy column is still
-// written to CSV (default "gpm") for backend compat but is invisible in the UI.
+// Multi-portfolio UI: user creates named buckets (e.g. "GrossProfitMargin",
+// "Cansu_TradeRepublic"). The CSV `strategy` column doubles as bucket key.
+// No hardcoded "gpm" default — buckets come from actual data + user creates.
 
 const REPO = "ohayiroglu/wallstreet-state";
 const BRANCH = "main";
@@ -20,22 +21,19 @@ const state = {
   pendingCsvRows: null,
   livePrices: {},  // ticker → {price, prevClose, change, changePct, dayHigh, dayLow, w52High, w52Low, ts}
   pricesLoadedAt: null,
-  // Multi-portfolio state. Internally we keep using the existing CSV `strategy`
-  // column as the portfolio bucket — no schema migration needed. Default
-  // bucket name is "gpm" (the system-managed sleeve); user-created portfolios
-  // get free-form names like "personal-picks" or "ai-bets".
+  // Multi-portfolio state. The CSV `strategy` column doubles as the portfolio
+  // bucket key. Buckets are case-sensitive and come from actual data — no
+  // hardcoded defaults. User creates buckets explicitly via "+ New portfolio".
   activePortfolio: localStorage.getItem("ws_active_portfolio") || "__all__",
-  portfolios: ["gpm"],   // populated from positions/transactions on load
+  portfolios: [],   // populated from positions/transactions on load
   // Per-portfolio metadata (currency, etc.) — stored in localStorage so the
   // setting persists without needing a state-repo round-trip every time.
-  // Default: gpm = USD. Custom portfolios get whatever the user picked.
   portfolioMeta: (() => {
     try { return JSON.parse(localStorage.getItem("ws_portfolio_meta") || "{}") || {}; }
     catch { return {}; }
   })(),
 };
-// Ensure gpm has a default currency entry
-if (!state.portfolioMeta.gpm) state.portfolioMeta.gpm = { currency: "USD" };
+// (No hardcoded portfolio defaults — buckets come from actual CSV data only.)
 
 // ---------- Toast ----------
 function toast(msg, kind = "") {
@@ -170,13 +168,14 @@ async function refreshLivePrices() {
 }
 
 // ---------- Portfolio helpers ----------
-// The CSV `strategy` column doubles as portfolio bucket. "gpm" = system,
-// anything else = user-created (e.g. "personal-picks"). Never empty.
+// The CSV `strategy` column doubles as portfolio bucket key. User-created
+// buckets are free-form names like "GrossProfitMargin", "Cansu_TradeRepublic".
+// No hardcoded default — empty strategy = unassigned (rare, data quality issue).
 function normalizeStrategy(s) {
   // Trim whitespace; preserve case (user-facing names like "Cansu_TradeRepublic"
   // should display as typed). Comparisons throughout the app are case-sensitive.
-  const v = (s || "").toString().trim();
-  return v || "gpm";
+  // Returns empty string when input is empty — no hardcoded default bucket.
+  return (s || "").toString().trim();
 }
 function isValidPortfolioName(s) {
   // Letters (A-Z, a-z), digits, dashes, underscores. Must start with letter/digit.
@@ -184,22 +183,24 @@ function isValidPortfolioName(s) {
   return /^[A-Za-z0-9][A-Za-z0-9_-]{0,39}$/.test(s);
 }
 // Returns the portfolio that NEW transactions should be tagged with.
-// "__all__" is a UI-only filter, never a real bucket — fall back to gpm.
+// "__all__" is a UI-only filter, never a real bucket — returns null so callers
+// can refuse the write and prompt the user to pick a specific portfolio.
 function activePortfolioForWrite() {
   const a = state.activePortfolio;
-  return (!a || a === "__all__") ? "gpm" : a;
+  return (!a || a === "__all__") ? null : a;
 }
-// Buy/CSV-import helpers used to be hard-coded "gpm" — now they follow
-// the active portfolio so newly logged trades land in the right bucket.
+// Buy/CSV-import helpers — null result means user is on "All portfolios"
+// view and the operation should be refused with a toast.
 function buyStrategySelected() { return activePortfolioForWrite(); }
 function csvStrategySelected() { return activePortfolioForWrite(); }
 
 function rebuildPortfolioList() {
-  const fromPos = new Set(state.positions.map(p => p.strategy || "gpm"));
+  const fromPos = new Set(state.positions.map(p => p.strategy).filter(Boolean));
   const fromTxn = new Set(state.transactions
     .filter(t => t.action !== "DEPOSIT")
-    .map(t => t.strategy || "gpm"));
-  const all = new Set(["gpm", ...fromPos, ...fromTxn]);
+    .map(t => t.strategy).filter(Boolean));
+  const all = new Set([...fromPos, ...fromTxn,
+                       ...Object.keys(state.portfolioMeta || {})]);
   state.portfolios = [...all].sort();
 }
 
@@ -213,7 +214,7 @@ function renderPortfolioSelector() {
   for (const p of state.portfolios) {
     const opt = document.createElement("option");
     opt.value = p;
-    opt.textContent = (p === "gpm" ? "📈 " : "💼 ") + p;
+    opt.textContent = "💼 " + p;
     sel.appendChild(opt);
   }
   if (state.portfolios.includes(cur) || cur === "__all__") sel.value = cur;
@@ -310,9 +311,6 @@ async function renamePortfolio() {
     toast(`"${newName}" already exists`, "bad");
     return;
   }
-  if (oldName === "gpm") {
-    if (!confirm(`Rename the system-managed "gpm" bucket? Future rebal-signal mails still tag new buys as "gpm" — your renamed bucket will get out of sync. Are you sure?`)) return;
-  }
   if (!getToken()) { showTokenSetup(true); toast("Add token first", "bad"); return; }
 
   // Update positions + transactions in-memory
@@ -354,10 +352,6 @@ async function deletePortfolio() {
   const cur = state.activePortfolio;
   if (!cur || cur === "__all__") {
     toast("Select a specific portfolio to delete (not 'All portfolios')", "bad");
-    return;
-  }
-  if (cur === "gpm") {
-    toast(`"gpm" is the system-managed default bucket — can't delete`, "bad");
     return;
   }
   const nPos = state.positions.filter(p => p.strategy === cur).length;
@@ -582,7 +576,7 @@ function serializePositions(positions) {
       cost_basis: p.cost_basis.toFixed(2),
       first_buy_date: p.first_buy_date,
       sector: p.sector,
-      strategy: p.strategy || "gpm",
+      strategy: p.strategy || "",
       isin: p.isin || "",
     })),
     ["ticker", "shares", "cost_basis", "first_buy_date", "sector", "strategy", "isin"]
@@ -598,7 +592,7 @@ function serializeTransactions(txns) {
       shares: t.shares ? t.shares.toFixed(6).replace(/\.?0+$/, "") : "0",
       price: t.price ? t.price.toFixed(4).replace(/\.?0+$/, "") : "0",
       amount: (t.amount || 0).toFixed(2),
-      strategy: t.action === "DEPOSIT" ? "" : (t.strategy || "gpm"),
+      strategy: t.action === "DEPOSIT" ? "" : (t.strategy || ""),
       isin: t.isin || "",
     })),
     ["date", "action", "ticker", "shares", "price", "amount", "strategy", "isin"]
@@ -632,12 +626,12 @@ function fmtSigned(v) {
 
 function filteredPositions() {
   if (!state.activePortfolio || state.activePortfolio === "__all__") return state.positions;
-  return state.positions.filter(p => (p.strategy || "gpm") === state.activePortfolio);
+  return state.positions.filter(p => p.strategy === state.activePortfolio);
 }
 function filteredTransactions() {
   if (!state.activePortfolio || state.activePortfolio === "__all__") return state.transactions;
   return state.transactions.filter(t =>
-    t.action === "DEPOSIT" ? false : (t.strategy || "gpm") === state.activePortfolio);
+    t.action === "DEPOSIT" ? false : t.strategy === state.activePortfolio);
 }
 
 function renderPortfolio() {
@@ -733,7 +727,7 @@ function renderTransactions() {
   const all = state.transactions.map((t, i) => ({ ...t, _idx: i }));
   const visible = (!state.activePortfolio || state.activePortfolio === "__all__")
     ? all
-    : all.filter(t => t.action === "DEPOSIT" || (t.strategy || "gpm") === state.activePortfolio);
+    : all.filter(t => t.action === "DEPOSIT" || t.strategy === state.activePortfolio);
   const indexed = visible
     .sort((a, b) => b.date.localeCompare(a.date))
     .slice(0, 20);
@@ -882,6 +876,10 @@ async function submitBuy() {
   const date = document.getElementById("buy-date").value || todayIso();
   const isin = (document.getElementById("buy-isin").value || "").trim().toUpperCase();
   const strategy = buyStrategySelected();
+  if (!strategy) {
+    toast("Select a specific portfolio first (not 'All portfolios')", "bad");
+    return;
+  }
   if (!tk || !shares || !price) { toast("Fill all fields", "bad"); return; }
   if (!getToken()) { showTokenSetup(true); toast("Add token first", "bad"); return; }
   const amount = shares * price;
@@ -1623,9 +1621,15 @@ async function init() {
   document.getElementById("csv-file").addEventListener("change", async (e) => {
     const f = e.target.files[0];
     if (!f) return;
+    const csvStrategy = csvStrategySelected();
+    if (!csvStrategy) {
+      toast("Select a specific portfolio first (not 'All portfolios')", "bad");
+      e.target.value = "";
+      return;
+    }
     try {
       const text = await f.text();
-      state.pendingCsvRows = parseImportCsv(text, "gpm");
+      state.pendingCsvRows = parseImportCsv(text, csvStrategy);
       previewCsv(state.pendingCsvRows);
       if (state.pendingCsvRows.length === 0) {
         toast(`No trades found in ${f.name}`, "bad");
