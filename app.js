@@ -18,6 +18,8 @@ const state = {
   transactions: [], // [{date, action, ticker, shares, price, amount, strategy}]
   tickerIndex: [],  // [{t, n, s}]
   pendingCsvRows: null,
+  livePrices: {},  // ticker → {price, prevClose, change, changePct, dayHigh, dayLow, w52High, w52Low, ts}
+  pricesLoadedAt: null,
 };
 
 // ---------- Toast ----------
@@ -46,6 +48,56 @@ function clearToken() {
 
 function showTokenSetup(visible) {
   document.getElementById("token-setup").classList.toggle("hidden", !visible);
+}
+
+// ---------- Live prices (Yahoo Finance v8 chart API) ----------
+// CORS-friendly endpoint that returns regularMarketPrice + 52w range + day high/low.
+// Falls through gracefully if Yahoo blocks CORS in some browsers — we just lose
+// MTM that session, never crash the app.
+async function fetchYahooQuote(ticker) {
+  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(ticker)}?interval=1d&range=2d`;
+  const res = await fetch(url, { mode: "cors" });
+  if (!res.ok) throw new Error(`yahoo ${ticker} ${res.status}`);
+  const j = await res.json();
+  const meta = j?.chart?.result?.[0]?.meta;
+  if (!meta || !meta.regularMarketPrice) throw new Error(`no price ${ticker}`);
+  const price = Number(meta.regularMarketPrice);
+  const prev = Number(meta.previousClose ?? meta.chartPreviousClose ?? price);
+  return {
+    price,
+    prevClose: prev,
+    change: price - prev,
+    changePct: prev > 0 ? (price / prev - 1) * 100 : 0,
+    dayHigh: Number(meta.regularMarketDayHigh ?? price),
+    dayLow:  Number(meta.regularMarketDayLow ?? price),
+    w52High: Number(meta.fiftyTwoWeekHigh ?? 0),
+    w52Low:  Number(meta.fiftyTwoWeekLow ?? 0),
+    currency: meta.currency || "USD",
+    ts: Date.now(),
+  };
+}
+
+async function refreshLivePrices() {
+  const tickers = [...new Set(state.positions.map(p => p.ticker))];
+  if (tickers.length === 0) return;
+  const status = document.getElementById("prices-status");
+  status.textContent = `Fetching ${tickers.length} prices...`;
+  let ok = 0, fail = 0;
+  await Promise.all(tickers.map(async t => {
+    try {
+      state.livePrices[t] = await fetchYahooQuote(t);
+      ok++;
+    } catch (e) {
+      console.error("price fetch failed:", t, e);
+      fail++;
+    }
+  }));
+  state.pricesLoadedAt = Date.now();
+  const when = new Date().toLocaleTimeString();
+  status.textContent = ok === tickers.length
+    ? `Live prices loaded ${when} (${ok})`
+    : `Loaded ${ok}/${tickers.length} prices ${when} — ${fail} failed (CORS or symbol unknown)`;
+  renderPortfolio();
 }
 
 // ---------- Strategy helpers ----------
@@ -162,9 +214,13 @@ async function loadState() {
     document.getElementById("last-sync").textContent = "Synced: " + new Date().toLocaleTimeString();
     document.getElementById("status").textContent =
       `${state.positions.length} positions • ${state.transactions.length} transactions`;
+
+    // Live prices in the background — surface MTM as soon as Yahoo responds
+    refreshLivePrices().catch(err => console.error("price refresh:", err));
   } catch (e) {
-    toast("Load error: " + e.message, "bad");
-    document.getElementById("status").textContent = "ERROR";
+    console.error("loadState failed:", e);
+    toast("Load error: " + (e.message || e), "bad");
+    document.getElementById("status").textContent = "ERROR — " + (e.message || "see console");
   }
 }
 
@@ -228,22 +284,79 @@ function fmtMoney(v) {
   return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(v);
 }
 
+function fmtNum(v, dp = 2) {
+  return v.toLocaleString("en-US", { minimumFractionDigits: dp, maximumFractionDigits: dp });
+}
+function fmtSigned(v) {
+  const s = v >= 0 ? "+" : "";
+  return s + fmtNum(v);
+}
+
 function renderPortfolio() {
   const tbody = document.querySelector("#positions-table tbody");
   const emptyEl = document.getElementById("empty-positions");
   const tableEl = document.getElementById("positions-table");
   tbody.innerHTML = "";
   const sorted = [...state.positions].sort((a, b) => b.cost_basis - a.cost_basis);
+
+  let totalCost = 0, totalValue = 0;
+
   for (const p of sorted) {
+    const live = state.livePrices[p.ticker];
+    const avgCost = p.shares > 0 ? p.cost_basis / p.shares : 0;
+    const value = live ? p.shares * live.price : null;
+    const pl = value !== null ? value - p.cost_basis : null;
+    const plPct = (pl !== null && p.cost_basis > 0) ? (pl / p.cost_basis) * 100 : null;
+
+    totalCost += p.cost_basis;
+    if (value !== null) totalValue += value;
+
+    // 52w range bar — marker at current price relative to [low, high]
+    let rangeCell = `<span class="muted">—</span>`;
+    if (live && live.w52High > live.w52Low && live.w52Low > 0) {
+      const lo = live.w52Low, hi = live.w52High, px = live.price;
+      const pct = Math.max(0, Math.min(100, ((px - lo) / (hi - lo)) * 100));
+      rangeCell = `
+        <span class="muted" style="font-size:11px;">$${fmtNum(lo)}</span>
+        <span class="range-bar"><span class="marker" style="left:${pct.toFixed(0)}%"></span></span>
+        <span class="muted" style="font-size:11px;">$${fmtNum(hi)}</span>`;
+    }
+
+    // Day delta cell
+    let dayCell = `<span class="muted">—</span>`;
+    if (live) {
+      const cls = live.changePct > 0 ? "day-delta-pos" : live.changePct < 0 ? "day-delta-neg" : "";
+      dayCell = `<span class="${cls}">${live.changePct >= 0 ? "+" : ""}${fmtNum(live.changePct)}%</span>`;
+    }
+
+    // P&L cell
+    let plCell = `<span class="muted">—</span>`;
+    if (pl !== null) {
+      const cls = pl > 0 ? "pl-pos" : pl < 0 ? "pl-neg" : "pl-zero";
+      const pctTxt = plPct !== null ? `(${plPct >= 0 ? "+" : ""}${fmtNum(plPct, 1)}%)` : "";
+      plCell = `<span class="${cls}">${pl >= 0 ? "+" : ""}$${fmtNum(Math.abs(pl), 0)} <small>${pctTxt}</small></span>`;
+    }
+
     const row = document.createElement("tr");
+    row.dataset.ticker = p.ticker;
     row.innerHTML = `
-      <td><strong>${p.ticker}</strong></td>
-      <td>${p.shares.toFixed(4).replace(/\.?0+$/, "")}</td>
-      <td>${fmtMoney(p.cost_basis)}</td>
-      <td>${p.first_buy_date}</td>
-      <td>${p.sector}</td>`;
+      <td><strong>${p.ticker}</strong>
+        <div class="muted" style="font-size:11px;">${p.first_buy_date}</div></td>
+      <td class="muted" style="font-size:12px;">${p.sector || ""}</td>
+      <td class="num">${p.shares.toFixed(4).replace(/\.?0+$/, "")}</td>
+      <td class="num">$${fmtNum(avgCost)}</td>
+      <td class="num">${live ? "$" + fmtNum(live.price) : "<span class='muted'>—</span>"}</td>
+      <td class="num">${dayCell}</td>
+      <td class="num">${rangeCell}</td>
+      <td class="num">${value !== null ? "$" + fmtNum(value, 0) : "<span class='muted'>—</span>"}</td>
+      <td class="num">${plCell}</td>
+      <td class="actions">
+        <button class="row-action" data-act="edit-pos" data-ticker="${p.ticker}" title="Edit">✏️</button>
+        <button class="row-action danger" data-act="del-pos" data-ticker="${p.ticker}" title="Delete">🗑️</button>
+      </td>`;
     tbody.appendChild(row);
   }
+
   if (sorted.length === 0) {
     tableEl.classList.add("hidden");
     emptyEl.classList.remove("hidden");
@@ -252,24 +365,42 @@ function renderPortfolio() {
     emptyEl.classList.add("hidden");
   }
 
-  const totalCost = state.positions.reduce((s, p) => s + p.cost_basis, 0);
-  document.getElementById("total-value").textContent = fmtMoney(totalCost);
+  const totalPL = totalValue - totalCost;
+  const totalPLPct = totalCost > 0 ? (totalPL / totalCost) * 100 : 0;
+  document.getElementById("total-cost").textContent = "$" + fmtNum(totalCost, 0);
+  document.getElementById("total-value").textContent = totalValue > 0 ? "$" + fmtNum(totalValue, 0) : "—";
+  const plEl = document.getElementById("total-pl");
+  if (totalValue > 0) {
+    const sign = totalPL >= 0 ? "+" : "";
+    plEl.innerHTML = `<span class="${totalPL >= 0 ? "pl-pos" : "pl-neg"}">${sign}$${fmtNum(Math.abs(totalPL), 0)} (${sign}${fmtNum(totalPLPct, 1)}%)</span>`;
+  } else {
+    plEl.textContent = "—";
+  }
 }
 
 function renderTransactions() {
   const tbody = document.querySelector("#transactions-table tbody");
   tbody.innerHTML = "";
-  const recent = [...state.transactions].sort((a, b) => b.date.localeCompare(a.date)).slice(0, 20);
-  for (const t of recent) {
+  // Use full list — index in state.transactions is the stable identifier
+  const indexed = state.transactions
+    .map((t, i) => ({ ...t, _idx: i }))
+    .sort((a, b) => b.date.localeCompare(a.date))
+    .slice(0, 20);
+  for (const t of indexed) {
     const row = document.createElement("tr");
+    row.dataset.idx = t._idx;
     const actionColor = t.action === "BUY" ? "#10B981" : t.action === "SELL" ? "#EF4444" : "#94A3B8";
     row.innerHTML = `
       <td>${t.date}</td>
       <td style="color:${actionColor}">${t.action}</td>
       <td>${t.ticker || ""}</td>
-      <td>${t.shares ? t.shares.toFixed(4).replace(/\.?0+$/, "") : ""}</td>
-      <td>${t.price ? fmtMoney(t.price) : ""}</td>
-      <td>${fmtMoney(t.amount)}</td>`;
+      <td class="num">${t.shares ? t.shares.toFixed(4).replace(/\.?0+$/, "") : ""}</td>
+      <td class="num">${t.price ? "$" + fmtNum(t.price) : ""}</td>
+      <td class="num">$${fmtNum(t.amount, 0)}</td>
+      <td class="actions">
+        <button class="row-action" data-act="edit-txn" data-idx="${t._idx}" title="Edit">✏️</button>
+        <button class="row-action danger" data-act="del-txn" data-idx="${t._idx}" title="Delete">🗑️</button>
+      </td>`;
     tbody.appendChild(row);
   }
 }
@@ -651,6 +782,166 @@ async function commitCsvImport() {
   }
 }
 
+// ---------- Inline edit / delete ----------
+function startEditPosition(ticker) {
+  const row = document.querySelector(`#positions-table tbody tr[data-ticker="${ticker}"]`);
+  if (!row) return;
+  const p = state.positions.find(x => x.ticker === ticker);
+  if (!p) return;
+  row.classList.add("editing");
+  row.innerHTML = `
+    <td><strong>${p.ticker}</strong>
+      <div class="muted" style="font-size:11px;">
+        <input type="date" data-f="first_buy_date" value="${p.first_buy_date || ""}">
+      </div></td>
+    <td><input type="text" data-f="sector" value="${p.sector || ""}"></td>
+    <td class="num"><input type="number" step="0.0001" data-f="shares" value="${p.shares}"></td>
+    <td class="num"><input type="number" step="0.01" data-f="cost_basis" value="${p.cost_basis}"></td>
+    <td colspan="5" class="muted" style="font-size:12px;">live values recompute on save</td>
+    <td class="actions">
+      <button class="row-action" data-act="save-pos" data-ticker="${p.ticker}" title="Save">💾</button>
+      <button class="row-action" data-act="cancel-pos" title="Cancel">✖</button>
+    </td>`;
+}
+
+async function savePositionEdit(ticker) {
+  const row = document.querySelector(`#positions-table tbody tr[data-ticker="${ticker}"]`);
+  if (!row) return;
+  const p = state.positions.find(x => x.ticker === ticker);
+  if (!p) return;
+  const f = (k) => row.querySelector(`[data-f="${k}"]`)?.value;
+  const updated = {
+    ...p,
+    shares: parseFloat(f("shares")) || 0,
+    cost_basis: parseFloat(f("cost_basis")) || 0,
+    first_buy_date: f("first_buy_date") || p.first_buy_date,
+    sector: f("sector") || p.sector,
+  };
+  if (updated.shares <= 0) {
+    toast("Shares must be > 0 (use delete to remove the position)", "bad");
+    return;
+  }
+  if (!getToken()) { showTokenSetup(true); toast("Add token first", "bad"); return; }
+
+  const newPositions = state.positions.map(x =>
+    (x.ticker === p.ticker && x.strategy === p.strategy) ? updated : x);
+  const posCsv = serializePositions(newPositions);
+  try {
+    await ghCommitMultiFile({ "positions.csv": posCsv },
+      `Edit ${p.ticker}: ${p.shares}→${updated.shares} shares, $${p.cost_basis.toFixed(2)}→$${updated.cost_basis.toFixed(2)}`);
+    state.positions = newPositions;
+    renderPortfolio();
+    refreshSellDropdown();
+    toast(`Updated ${p.ticker}`, "good");
+  } catch (e) {
+    toast("Save failed: " + e.message, "bad");
+  }
+}
+
+async function deletePosition(ticker) {
+  const p = state.positions.find(x => x.ticker === ticker);
+  if (!p) return;
+  if (!confirm(`Delete ${ticker} (${p.shares.toFixed(4)} shares, $${p.cost_basis.toFixed(2)} cost)? Existing transactions are kept.`)) return;
+  if (!getToken()) { showTokenSetup(true); toast("Add token first", "bad"); return; }
+  const newPositions = state.positions.filter(x => x.ticker !== p.ticker);
+  const posCsv = serializePositions(newPositions);
+  try {
+    await ghCommitMultiFile({ "positions.csv": posCsv }, `Delete position ${ticker}`);
+    state.positions = newPositions;
+    renderPortfolio();
+    refreshSellDropdown();
+    toast(`Deleted ${ticker}`, "good");
+  } catch (e) {
+    toast("Delete failed: " + e.message, "bad");
+  }
+}
+
+function startEditTransaction(idx) {
+  const row = document.querySelector(`#transactions-table tbody tr[data-idx="${idx}"]`);
+  if (!row) return;
+  const t = state.transactions[idx];
+  if (!t) return;
+  row.classList.add("editing");
+  row.innerHTML = `
+    <td><input type="date" data-f="date" value="${t.date}"></td>
+    <td><select data-f="action">
+      ${["BUY","SELL","DEPOSIT"].map(a => `<option value="${a}" ${t.action===a?"selected":""}>${a}</option>`).join("")}
+    </select></td>
+    <td><input type="text" data-f="ticker" value="${t.ticker || ""}" placeholder="e.g. MTCH"></td>
+    <td class="num"><input type="number" step="0.0001" data-f="shares" value="${t.shares || 0}"></td>
+    <td class="num"><input type="number" step="0.01" data-f="price" value="${t.price || 0}"></td>
+    <td class="num"><input type="number" step="0.01" data-f="amount" value="${t.amount || 0}"></td>
+    <td class="actions">
+      <button class="row-action" data-act="save-txn" data-idx="${idx}" title="Save">💾</button>
+      <button class="row-action" data-act="cancel-txn" title="Cancel">✖</button>
+    </td>`;
+}
+
+async function saveTransactionEdit(idx) {
+  const row = document.querySelector(`#transactions-table tbody tr[data-idx="${idx}"]`);
+  if (!row) return;
+  const t = state.transactions[idx];
+  if (!t) return;
+  const f = (k) => row.querySelector(`[data-f="${k}"]`)?.value;
+  const updated = {
+    ...t,
+    date: f("date") || t.date,
+    action: f("action") || t.action,
+    ticker: (f("ticker") || "").toUpperCase().trim(),
+    shares: parseFloat(f("shares")) || 0,
+    price: parseFloat(f("price")) || 0,
+    amount: parseFloat(f("amount")) || 0,
+  };
+  if (!getToken()) { showTokenSetup(true); toast("Add token first", "bad"); return; }
+  const newTxns = state.transactions.map((x, i) => i === idx ? updated : x);
+  const txnsCsv = serializeTransactions(newTxns);
+  try {
+    await ghCommitMultiFile({ "transactions.csv": txnsCsv },
+      `Edit txn ${updated.date} ${updated.action} ${updated.ticker || ""}`);
+    state.transactions = newTxns;
+    renderTransactions();
+    toast("Transaction updated", "good");
+  } catch (e) {
+    toast("Save failed: " + e.message, "bad");
+  }
+}
+
+async function deleteTransaction(idx) {
+  const t = state.transactions[idx];
+  if (!t) return;
+  const desc = `${t.date} ${t.action} ${t.ticker || ""} $${t.amount.toFixed(2)}`;
+  if (!confirm(`Delete transaction "${desc}"? Position rows are NOT recomputed — edit positions separately if needed.`)) return;
+  if (!getToken()) { showTokenSetup(true); toast("Add token first", "bad"); return; }
+  const newTxns = state.transactions.filter((_, i) => i !== idx);
+  const txnsCsv = serializeTransactions(newTxns);
+  try {
+    await ghCommitMultiFile({ "transactions.csv": txnsCsv }, `Delete txn ${desc}`);
+    state.transactions = newTxns;
+    renderTransactions();
+    toast("Transaction deleted", "good");
+  } catch (e) {
+    toast("Delete failed: " + e.message, "bad");
+  }
+}
+
+function setupRowActions() {
+  document.addEventListener("click", (e) => {
+    const btn = e.target.closest("[data-act]");
+    if (!btn) return;
+    const act = btn.dataset.act;
+    const ticker = btn.dataset.ticker;
+    const idx = btn.dataset.idx ? parseInt(btn.dataset.idx, 10) : null;
+    if (act === "edit-pos") startEditPosition(ticker);
+    else if (act === "save-pos") savePositionEdit(ticker);
+    else if (act === "cancel-pos") renderPortfolio();
+    else if (act === "del-pos") deletePosition(ticker);
+    else if (act === "edit-txn") startEditTransaction(idx);
+    else if (act === "save-txn") saveTransactionEdit(idx);
+    else if (act === "cancel-txn") renderTransactions();
+    else if (act === "del-txn") deleteTransaction(idx);
+  });
+}
+
 // ---------- Parqet CSV export ----------
 // Mirrors the 23-column Trade Republic export format that Parqet ingests.
 // Only BUY/SELL trades are exported; DEPOSITs and corporate actions are skipped.
@@ -748,6 +1039,7 @@ function downloadParqetCsv() {
 async function init() {
   setupTabs();
   setupTickerSearch();
+  setupRowActions();
   await loadTickerIndex();
 
   if (!getToken()) {
@@ -772,7 +1064,11 @@ async function init() {
     showTokenSetup(true);
     toast("Token cleared");
   });
-  document.getElementById("refresh-btn").addEventListener("click", loadState);
+  document.getElementById("refresh-btn").addEventListener("click", async () => {
+    await loadState();
+    refreshLivePrices();
+  });
+  document.getElementById("refresh-prices").addEventListener("click", refreshLivePrices);
 
   document.getElementById("buy-submit").addEventListener("click", submitBuy);
   document.getElementById("sell-submit").addEventListener("click", submitSell);

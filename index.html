@@ -39,17 +39,25 @@
     <div class="card-header">
       <h2 id="portfolio-title">Holdings</h2>
       <div class="stats" id="strategy-stats">
-        <span class="stat-pill total">Total: <strong id="total-value">—</strong></span>
+        <span class="stat-pill">Cost: <strong id="total-cost">—</strong></span>
+        <span class="stat-pill">Value: <strong id="total-value">—</strong></span>
+        <span class="stat-pill total">P&amp;L: <strong id="total-pl">—</strong></span>
+        <button id="refresh-prices" class="muted-btn" title="Reload live prices from Yahoo Finance">↻ Prices</button>
       </div>
     </div>
     <table id="positions-table">
       <thead>
         <tr>
           <th>Ticker</th>
-          <th>Shares</th>
-          <th>Cost basis</th>
-          <th>First buy</th>
           <th>Sector</th>
+          <th class="num">Shares</th>
+          <th class="num">Avg cost</th>
+          <th class="num">Price</th>
+          <th class="num">Day Δ</th>
+          <th class="num">52w range</th>
+          <th class="num">Value</th>
+          <th class="num">P&amp;L</th>
+          <th class="actions"></th>
         </tr>
       </thead>
       <tbody><!-- populated by JS --></tbody>
@@ -57,6 +65,7 @@
     <div id="empty-positions" class="empty-state hidden">
       No positions yet.
     </div>
+    <div id="prices-status" class="muted" style="margin-top:8px;font-size:12px;"></div>
   </section>
 
   <!-- Action tabs -->
@@ -134,7 +143,7 @@
     <h2>Recent Transactions</h2>
     <table id="transactions-table">
       <thead>
-        <tr><th>Date</th><th>Action</th><th>Ticker</th><th>Shares</th><th>Price</th><th>Amount</th></tr>
+        <tr><th>Date</th><th>Action</th><th>Ticker</th><th class="num">Shares</th><th class="num">Price</th><th class="num">Amount</th><th class="actions"></th></tr>
       </thead>
       <tbody></tbody>
     </table>
@@ -159,6 +168,6 @@
   </footer>
 </div>
 
-<script src="app.js"></script>
+<script src="app.js?v=20260429b"></script>
 </body>
 </html>
