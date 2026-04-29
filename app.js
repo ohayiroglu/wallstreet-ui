@@ -722,13 +722,15 @@ async function submitSell() {
 }
 
 // ---------- CSV Import ----------
+// Aliases cover both T212 web export (Action / Time / Ticker / No. of shares /
+// Price / share / Gross Total) and Trade Republic / Parqet exports.
 const HEADER_ALIASES = {
-  date: ["date", "tarih", "trade_date", "execution_date", "time"],
+  date: ["date", "tarih", "trade_date", "execution_date", "time", "datetime"],
   action: ["action", "side", "type", "transaction_type", "buy_sell"],
   ticker: ["ticker", "symbol", "instrument", "isin"],
-  shares: ["shares", "quantity", "qty", "no_of_shares"],
-  price: ["price", "exec_price", "share_price", "price_per_share"],
-  amount: ["amount", "total", "total_value", "value"],
+  shares: ["shares", "quantity", "qty", "no_of_shares", "number_of_shares"],
+  price: ["price", "exec_price", "share_price", "price_per_share", "price_share"],
+  amount: ["amount", "total", "total_value", "value", "gross_total", "gross_amount"],
 };
 
 function normalizeHeader(h) {
@@ -752,8 +754,14 @@ function parseImportCsv(text, strategy) {
   // Find category column by scanning normalized headers for "category".
   const categoryColIdx = headers.findIndex(h =>
     h.toLowerCase().replace(/[^a-z0-9_]/g, "_").replace(/^_+|_+$/g, "") === "category");
-  const isBuyish  = (a) => ["BUY", "PURCHASE", "ALIM"].includes(a) || a === "B";
-  const isSellish = (a) => ["SELL", "SALE", "SATIS"].includes(a) || a === "S";
+
+  // Word-level matcher: handles both single-token actions ("BUY") and phrases
+  // ("Market buy", "Limit sell", "Buy trade ..."). Avoids the previous
+  // .includes() footgun that mis-classified REVERSE_SPLIT as SELL.
+  const BUY_WORDS  = ["BUY", "PURCHASE", "ALIM"];
+  const SELL_WORDS = ["SELL", "SALE", "SATIS"];
+  const isBuyish  = (a) => a.toUpperCase().split(/[\s_]+/).some(w => BUY_WORDS.includes(w));
+  const isSellish = (a) => a.toUpperCase().split(/[\s_]+/).some(w => SELL_WORDS.includes(w));
 
   const out = [];
   let skippedNonTrade = 0, skippedBadData = 0;
@@ -762,7 +770,7 @@ function parseImportCsv(text, strategy) {
       const cat = (r[headers[categoryColIdx]] || "").toUpperCase().trim();
       if (cat && cat !== "TRADING") { skippedNonTrade++; continue; }
     }
-    const action = (r[headers[colMap.action]] || "").toUpperCase().trim();
+    const action = (r[headers[colMap.action]] || "").trim();
     const isBuy = isBuyish(action);
     const isSell = isSellish(action);
     if (!isBuy && !isSell) { skippedNonTrade++; continue; }
@@ -776,7 +784,9 @@ function parseImportCsv(text, strategy) {
     const shares = Math.abs(sharesRaw);   // T212 emits negative shares for SELL
 
     let date = r[headers[colMap.date]] || todayIso();
-    date = date.split("T")[0].replace(/[./]/g, "-");
+    // Strip time component: handles both "2026-04-29T12:32:19" (ISO) and
+    // "2026-04-29 12:32:19" (T212 web export space-separator).
+    date = date.split(/[T ]/)[0].replace(/[./]/g, "-");
     if (/^\d{2}-\d{2}-\d{4}$/.test(date)) {
       const [d, m, y] = date.split("-");
       date = `${y}-${m}-${d}`;
@@ -1207,7 +1217,7 @@ async function init() {
     if (!f) return;
     try {
       const text = await f.text();
-      state.pendingCsvRows = parseImportCsv(text, csvStrategySelected());
+      state.pendingCsvRows = parseImportCsv(text, "gpm");
       previewCsv(state.pendingCsvRows);
       if (state.pendingCsvRows.length === 0) {
         toast(`No trades found in ${f.name}`, "bad");
