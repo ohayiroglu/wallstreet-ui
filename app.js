@@ -622,7 +622,13 @@ function activeCurrency() {
   // with USD as the lowest-friction default until user filters to a single one).
   const a = state.activePortfolio;
   if (!a || a === "__all__") return "USD";
-  return state.portfolioMeta?.[a]?.currency || "USD";
+  // Explicit user override wins.
+  const meta = state.portfolioMeta?.[a];
+  if (meta?.currency) return meta.currency;
+  // Auto-detect by name for portfolios discovered from imported CSVs (where
+  // the user never went through the New-portfolio modal). TR/TradeRepublic
+  // imports are always EUR; everything else defaults USD.
+  return /traderepublic|tradrepublic|^tr_/i.test(a) ? "EUR" : "USD";
 }
 function curSym(cur) { return cur === "EUR" ? "€" : "$"; }
 function fmtMoney(v, cur) {
