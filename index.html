@@ -34,20 +34,30 @@
     <p class="muted">Token is stored only in this browser's localStorage. It is never sent anywhere except api.github.com (to commit your changes on your behalf).</p>
   </section>
 
+  <!-- Strategy selector pills -->
+  <nav id="strategy-pills" class="strategy-pills">
+    <button class="pill active" data-strategy="all">📊 All</button>
+    <button class="pill pill-dcf" data-strategy="dcf">💎 DCF</button>
+    <button class="pill pill-gpm" data-strategy="gpm">📈 GPM</button>
+  </nav>
+
   <!-- Portfolio overview -->
   <section id="portfolio" class="card">
     <div class="card-header">
-      <h2>Portfolio</h2>
-      <div class="stats">
-        <span>Cash: <strong id="cash-balance">—</strong></span>
-        <span>Total value: <strong id="total-value">—</strong></span>
-        <span>Contributed: <strong id="total-contributed">—</strong></span>
+      <h2 id="portfolio-title">Portfolio</h2>
+      <div class="stats" id="strategy-stats">
+        <span class="stat-pill">Cash: <strong id="cash-balance">—</strong></span>
+        <span class="stat-pill"><span class="dot dot-dcf"></span> DCF: <strong id="dcf-value">—</strong></span>
+        <span class="stat-pill"><span class="dot dot-gpm"></span> GPM: <strong id="gpm-value">—</strong></span>
+        <span class="stat-pill total">Total: <strong id="total-value">—</strong></span>
+        <span class="stat-pill muted-pill">Contributed: <strong id="total-contributed">—</strong></span>
       </div>
     </div>
     <table id="positions-table">
       <thead>
         <tr>
           <th>Ticker</th>
+          <th>Strategy</th>
           <th>Shares</th>
           <th>Cost basis</th>
           <th>First buy</th>
@@ -56,6 +66,9 @@
       </thead>
       <tbody><!-- populated by JS --></tbody>
     </table>
+    <div id="empty-positions" class="empty-state hidden">
+      No positions in this strategy yet.
+    </div>
   </section>
 
   <!-- Action tabs -->
@@ -79,12 +92,27 @@
         </label>
       </div>
       <button id="cash-submit" class="primary">Add Cash</button>
-      <p class="muted">Adds the amount to <code>cash.json</code> and writes a "DEPOSIT" row to <code>transactions.csv</code>.</p>
+      <p class="muted">Adds the amount to <code>cash.json</code> and writes a "DEPOSIT" row to <code>transactions.csv</code>. Cash pool is shared across DCF and GPM strategies.</p>
     </div>
 
     <!-- Buy tab -->
     <div class="tab-content" data-tab="buy">
       <h3>Buy</h3>
+      <div class="form-row">
+        <fieldset class="strategy-fieldset">
+          <legend>Strategy</legend>
+          <label class="radio-label">
+            <input type="radio" name="buy-strategy" value="dcf" checked>
+            <span class="strategy-tag tag-dcf">💎 DCF</span>
+            <small>Quarterly fair-value</small>
+          </label>
+          <label class="radio-label">
+            <input type="radio" name="buy-strategy" value="gpm">
+            <span class="strategy-tag tag-gpm">📈 GPM</span>
+            <small>Monthly margin-accel</small>
+          </label>
+        </fieldset>
+      </div>
       <div class="form-row">
         <label class="search-wrapper">
           Ticker (search):
@@ -135,8 +163,21 @@
     <!-- CSV Import tab -->
     <div class="tab-content" data-tab="csv">
       <h3>CSV Import</h3>
+      <div class="form-row">
+        <fieldset class="strategy-fieldset">
+          <legend>Tag imported buys/sells as</legend>
+          <label class="radio-label">
+            <input type="radio" name="csv-strategy" value="dcf" checked>
+            <span class="strategy-tag tag-dcf">💎 DCF</span>
+          </label>
+          <label class="radio-label">
+            <input type="radio" name="csv-strategy" value="gpm">
+            <span class="strategy-tag tag-gpm">📈 GPM</span>
+          </label>
+        </fieldset>
+      </div>
       <p class="muted">
-        Upload a T212 or Parqet export. BUY/SELL rows are auto-detected.
+        Upload a T212 or Parqet export. BUY/SELL rows are auto-detected and tagged with the selected strategy.
         Column names are flexible; "Action / Ticker / Shares / Price / Date" variants are supported.
       </p>
       <input type="file" id="csv-file" accept=".csv">
@@ -149,7 +190,7 @@
     <h2>Recent Transactions</h2>
     <table id="transactions-table">
       <thead>
-        <tr><th>Date</th><th>Action</th><th>Ticker</th><th>Shares</th><th>Price</th><th>Amount</th></tr>
+        <tr><th>Date</th><th>Action</th><th>Strategy</th><th>Ticker</th><th>Shares</th><th>Price</th><th>Amount</th></tr>
       </thead>
       <tbody></tbody>
     </table>

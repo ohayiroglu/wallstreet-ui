@@ -1,5 +1,6 @@
 // Wallstreet Portfolio Manager — static GitHub Pages app
 // Reads/writes positions.csv, transactions.csv, cash.json on github.com/ohayiroglu/wallstreet-state via the GitHub API.
+// Tracks two parallel strategies: DCF (quarterly fair-value) and GPM (monthly margin-acceleration).
 
 const REPO = "ohayiroglu/wallstreet-state";
 const BRANCH = "main";
@@ -9,10 +10,11 @@ const API_BASE = `https://api.github.com/repos/${REPO}`;
 // In-memory state
 const state = {
   cash: { cash: 0, total_contributed: 0, last_contribution_date: null },
-  positions: [],   // [{ticker, shares, cost_basis, first_buy_date, sector}]
-  transactions: [], // [{date, action, ticker, shares, price, amount}]
+  positions: [],   // [{ticker, shares, cost_basis, first_buy_date, sector, strategy}]
+  transactions: [], // [{date, action, ticker, shares, price, amount, strategy}]
   tickerIndex: [],  // [{t, n, s}]
   pendingCsvRows: null,
+  activeStrategy: "all",  // "all" | "dcf" | "gpm"
 };
 
 // ---------- Toast ----------
@@ -43,10 +45,34 @@ function showTokenSetup(visible) {
   document.getElementById("token-setup").classList.toggle("hidden", !visible);
 }
 
+// ---------- Strategy helpers ----------
+function normalizeStrategy(s) {
+  // Backwards compat: empty/missing strategy → "dcf" (existing rows pre-multi-strategy era)
+  const v = (s || "").toString().trim().toLowerCase();
+  return (v === "gpm") ? "gpm" : "dcf";
+}
+
+function buyStrategySelected() {
+  const r = document.querySelector("input[name='buy-strategy']:checked");
+  return r ? r.value : "dcf";
+}
+
+function csvStrategySelected() {
+  const r = document.querySelector("input[name='csv-strategy']:checked");
+  return r ? r.value : "dcf";
+}
+
+function setActiveStrategy(s) {
+  state.activeStrategy = s;
+  document.querySelectorAll(".strategy-pills .pill").forEach(p => {
+    p.classList.toggle("active", p.dataset.strategy === s);
+  });
+  renderPortfolio();
+  refreshSellDropdown();
+}
+
 // ---------- GitHub API ----------
 async function ghFetchRaw(path) {
-  // API contents endpoint with Accept: raw — works for both public and private
-  // repos when an auth token is present.
   const token = getToken();
   const headers = { Accept: "application/vnd.github.raw" };
   if (token) headers.Authorization = `Bearer ${token}`;
@@ -57,37 +83,21 @@ async function ghFetchRaw(path) {
   return res.text();
 }
 
-async function ghGetFileSha(path) {
-  // Need sha for PUT/commit
-  const res = await fetch(`${API_BASE}/contents/${path}?ref=${BRANCH}&_=${Date.now()}`, {
-    headers: { Authorization: `Bearer ${getToken()}`, Accept: "application/vnd.github+json" },
-  });
-  if (res.status === 404) return null;
-  if (!res.ok) throw new Error(`get sha failed: ${res.status} ${await res.text()}`);
-  const j = await res.json();
-  return j.sha;
-}
-
 async function ghCommitMultiFile(filesMap, message) {
-  // filesMap: { "path/in/repo": "string content", ... }
-  // Uses Git Database API to create one atomic commit covering all files.
   const token = getToken();
   if (!token) throw new Error("no token");
   const headers = { Authorization: `Bearer ${token}`, Accept: "application/vnd.github+json", "Content-Type": "application/json" };
 
-  // 1. Get current ref
   const refRes = await fetch(`${API_BASE}/git/refs/heads/${BRANCH}`, { headers });
   if (!refRes.ok) throw new Error(`ref fetch: ${refRes.status} ${await refRes.text()}`);
   const refJ = await refRes.json();
   const parentSha = refJ.object.sha;
 
-  // 2. Get parent commit -> tree sha
   const commitRes = await fetch(`${API_BASE}/git/commits/${parentSha}`, { headers });
   if (!commitRes.ok) throw new Error(`commit fetch: ${commitRes.status}`);
   const commitJ = await commitRes.json();
   const baseTree = commitJ.tree.sha;
 
-  // 3. Create blobs
   const treeEntries = [];
   for (const [path, content] of Object.entries(filesMap)) {
     const blobRes = await fetch(`${API_BASE}/git/blobs`, {
@@ -100,7 +110,6 @@ async function ghCommitMultiFile(filesMap, message) {
     treeEntries.push({ path, mode: "100644", type: "blob", sha: blobJ.sha });
   }
 
-  // 4. Create tree
   const treeRes = await fetch(`${API_BASE}/git/trees`, {
     method: "POST",
     headers,
@@ -109,7 +118,6 @@ async function ghCommitMultiFile(filesMap, message) {
   if (!treeRes.ok) throw new Error(`tree: ${treeRes.status} ${await treeRes.text()}`);
   const treeJ = await treeRes.json();
 
-  // 5. Create commit
   const newCommitRes = await fetch(`${API_BASE}/git/commits`, {
     method: "POST",
     headers,
@@ -118,7 +126,6 @@ async function ghCommitMultiFile(filesMap, message) {
   if (!newCommitRes.ok) throw new Error(`commit create: ${newCommitRes.status} ${await newCommitRes.text()}`);
   const newCommitJ = await newCommitRes.json();
 
-  // 6. Update ref
   const updateRes = await fetch(`${API_BASE}/git/refs/heads/${BRANCH}`, {
     method: "PATCH",
     headers,
@@ -130,7 +137,6 @@ async function ghCommitMultiFile(filesMap, message) {
 
 // ---------- CSV utilities ----------
 function csvParse(text) {
-  // Simple CSV parser — assumes no embedded commas/quotes
   const lines = text.trim().split(/\r?\n/);
   if (lines.length === 0) return { headers: [], rows: [] };
   const headers = lines[0].split(",").map(h => h.trim());
@@ -169,7 +175,10 @@ async function loadState() {
     renderTransactions();
     refreshSellDropdown();
     document.getElementById("last-sync").textContent = "Synced: " + new Date().toLocaleTimeString();
-    document.getElementById("status").textContent = `${state.positions.length} positions • ${state.transactions.length} transactions`;
+    const dcfCount = state.positions.filter(p => p.strategy === "dcf").length;
+    const gpmCount = state.positions.filter(p => p.strategy === "gpm").length;
+    document.getElementById("status").textContent =
+      `${dcfCount} DCF • ${gpmCount} GPM • ${state.transactions.length} transactions`;
   } catch (e) {
     toast("Load error: " + e.message, "bad");
     document.getElementById("status").textContent = "ERROR";
@@ -184,6 +193,7 @@ function parsePositions(text) {
     cost_basis: parseFloat(r.cost_basis) || 0,
     first_buy_date: r.first_buy_date || "",
     sector: r.sector || "",
+    strategy: normalizeStrategy(r.strategy),
   }));
 }
 
@@ -196,33 +206,37 @@ function parseTransactions(text) {
     shares: parseFloat(r.shares) || 0,
     price: parseFloat(r.price) || 0,
     amount: parseFloat(r.amount) || 0,
+    // DEPOSIT rows have no strategy (cash pool is shared); keep blank for those
+    strategy: r.action === "DEPOSIT" ? "" : normalizeStrategy(r.strategy),
   }));
 }
 
-function serializePositions() {
+function serializePositions(positions) {
   return csvStringify(
-    state.positions.map(p => ({
+    positions.map(p => ({
       ticker: p.ticker,
       shares: p.shares.toFixed(6).replace(/\.?0+$/, ""),
       cost_basis: p.cost_basis.toFixed(2),
       first_buy_date: p.first_buy_date,
       sector: p.sector,
+      strategy: p.strategy || "dcf",
     })),
-    ["ticker", "shares", "cost_basis", "first_buy_date", "sector"]
+    ["ticker", "shares", "cost_basis", "first_buy_date", "sector", "strategy"]
   );
 }
 
-function serializeTransactions() {
+function serializeTransactions(txns) {
   return csvStringify(
-    state.transactions.map(t => ({
+    txns.map(t => ({
       date: t.date,
       action: t.action,
-      ticker: t.ticker,
-      shares: t.shares.toFixed(6).replace(/\.?0+$/, ""),
-      price: t.price.toFixed(4).replace(/\.?0+$/, ""),
-      amount: t.amount.toFixed(2),
+      ticker: t.ticker || "",
+      shares: t.shares ? t.shares.toFixed(6).replace(/\.?0+$/, "") : "0",
+      price: t.price ? t.price.toFixed(4).replace(/\.?0+$/, "") : "0",
+      amount: (t.amount || 0).toFixed(2),
+      strategy: t.action === "DEPOSIT" ? "" : (t.strategy || "dcf"),
     })),
-    ["date", "action", "ticker", "shares", "price", "amount"]
+    ["date", "action", "ticker", "shares", "price", "amount", "strategy"]
   );
 }
 
@@ -231,36 +245,76 @@ function fmtMoney(v) {
   return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(v);
 }
 
+function strategyBadge(s) {
+  const norm = normalizeStrategy(s);
+  return `<span class="strategy-badge ${norm}">${norm.toUpperCase()}</span>`;
+}
+
+function filteredPositions() {
+  if (state.activeStrategy === "all") return state.positions;
+  return state.positions.filter(p => p.strategy === state.activeStrategy);
+}
+
 function renderPortfolio() {
   const tbody = document.querySelector("#positions-table tbody");
+  const emptyEl = document.getElementById("empty-positions");
+  const tableEl = document.getElementById("positions-table");
   tbody.innerHTML = "";
-  const sorted = [...state.positions].sort((a, b) => b.cost_basis - a.cost_basis);
+  const filtered = filteredPositions();
+  const sorted = [...filtered].sort((a, b) => b.cost_basis - a.cost_basis);
   for (const p of sorted) {
     const row = document.createElement("tr");
     row.innerHTML = `
       <td><strong>${p.ticker}</strong></td>
+      <td>${strategyBadge(p.strategy)}</td>
       <td>${p.shares.toFixed(4).replace(/\.?0+$/, "")}</td>
       <td>${fmtMoney(p.cost_basis)}</td>
       <td>${p.first_buy_date}</td>
       <td>${p.sector}</td>`;
     tbody.appendChild(row);
   }
-  const totalCost = state.positions.reduce((s, p) => s + p.cost_basis, 0);
+  if (sorted.length === 0) {
+    tableEl.classList.add("hidden");
+    emptyEl.classList.remove("hidden");
+  } else {
+    tableEl.classList.remove("hidden");
+    emptyEl.classList.add("hidden");
+  }
+
+  // Stats: split by strategy
+  const dcfCost = state.positions.filter(p => p.strategy === "dcf").reduce((s, p) => s + p.cost_basis, 0);
+  const gpmCost = state.positions.filter(p => p.strategy === "gpm").reduce((s, p) => s + p.cost_basis, 0);
+  const totalCost = dcfCost + gpmCost;
   document.getElementById("cash-balance").textContent = fmtMoney(state.cash.cash);
-  document.getElementById("total-value").textContent = fmtMoney(totalCost + state.cash.cash) + " (cost)";
+  document.getElementById("dcf-value").textContent = fmtMoney(dcfCost);
+  document.getElementById("gpm-value").textContent = fmtMoney(gpmCost);
+  document.getElementById("total-value").textContent = fmtMoney(totalCost + state.cash.cash);
   document.getElementById("total-contributed").textContent = fmtMoney(state.cash.total_contributed);
+
+  // Title reflects active strategy
+  const title = document.getElementById("portfolio-title");
+  if (state.activeStrategy === "dcf") title.textContent = "💎 DCF Portfolio";
+  else if (state.activeStrategy === "gpm") title.textContent = "📈 GPM Portfolio";
+  else title.textContent = "Portfolio (All)";
 }
 
 function renderTransactions() {
   const tbody = document.querySelector("#transactions-table tbody");
   tbody.innerHTML = "";
-  const recent = [...state.transactions].sort((a, b) => b.date.localeCompare(a.date)).slice(0, 20);
+  // Filter recent transactions by active strategy too (DEPOSIT shows in all views)
+  let txns = [...state.transactions];
+  if (state.activeStrategy !== "all") {
+    txns = txns.filter(t => t.action === "DEPOSIT" || t.strategy === state.activeStrategy);
+  }
+  const recent = txns.sort((a, b) => b.date.localeCompare(a.date)).slice(0, 20);
   for (const t of recent) {
     const row = document.createElement("tr");
     const actionColor = t.action === "BUY" ? "#10B981" : t.action === "SELL" ? "#EF4444" : "#94A3B8";
+    const stratCell = t.action === "DEPOSIT" ? '<span class="muted">—</span>' : strategyBadge(t.strategy);
     row.innerHTML = `
       <td>${t.date}</td>
       <td style="color:${actionColor}">${t.action}</td>
+      <td>${stratCell}</td>
       <td>${t.ticker || ""}</td>
       <td>${t.shares ? t.shares.toFixed(4).replace(/\.?0+$/, "") : ""}</td>
       <td>${t.price ? fmtMoney(t.price) : ""}</td>
@@ -272,10 +326,16 @@ function renderTransactions() {
 function refreshSellDropdown() {
   const sel = document.getElementById("sell-ticker");
   sel.innerHTML = '<option value="">— select —</option>';
-  for (const p of state.positions) {
+  // Sell dropdown uses ticker:strategy as key so we can sell from the right pool
+  const sellable = state.activeStrategy === "all"
+    ? state.positions
+    : state.positions.filter(p => p.strategy === state.activeStrategy);
+  for (const p of sellable) {
     const opt = document.createElement("option");
-    opt.value = p.ticker;
-    opt.textContent = `${p.ticker} (${p.shares.toFixed(4).replace(/\.?0+$/, "")} shares)`;
+    const key = `${p.ticker}|${p.strategy}`;
+    opt.value = key;
+    const stratLabel = p.strategy.toUpperCase();
+    opt.textContent = `${p.ticker} [${stratLabel}] (${p.shares.toFixed(4).replace(/\.?0+$/, "")} shares)`;
     sel.appendChild(opt);
   }
 }
@@ -289,7 +349,6 @@ async function loadTickerIndex() {
 function searchTickers(q) {
   if (!q) return [];
   const ql = q.toLowerCase();
-  // Prioritize exact ticker match, then prefix on ticker, then prefix on name, then substring
   const exact = [], tickerPrefix = [], namePrefix = [], substring = [];
   for (const t of state.tickerIndex) {
     const tl = t.t.toLowerCase();
@@ -355,15 +414,16 @@ function updateBuySummary() {
 }
 
 function updateSellSummary() {
-  const t = document.getElementById("sell-ticker").value;
+  const key = document.getElementById("sell-ticker").value;
   const s = parseFloat(document.getElementById("sell-shares").value) || 0;
   const p = parseFloat(document.getElementById("sell-price").value) || 0;
   const sum = document.getElementById("sell-summary");
-  if (t && s && p) {
+  if (key && s && p) {
+    const [tk, strat] = key.split("|");
     const total = s * p;
-    const pos = state.positions.find(x => x.ticker === t);
+    const pos = state.positions.find(x => x.ticker === tk && x.strategy === strat);
     const remaining = pos ? (pos.shares - s).toFixed(4) : "?";
-    sum.textContent = `Proceeds: ${fmtMoney(total)} • Remaining: ${remaining} shares`;
+    sum.textContent = `Proceeds: ${fmtMoney(total)} • Remaining: ${remaining} ${tk} (${strat.toUpperCase()})`;
   } else {
     sum.textContent = "";
   }
@@ -377,6 +437,12 @@ function setupTabs() {
       document.querySelectorAll(".tab-btn").forEach(b => b.classList.toggle("active", b === btn));
       document.querySelectorAll(".tab-content").forEach(c => c.classList.toggle("active", c.dataset.tab === tab));
     });
+  });
+}
+
+function setupStrategyPills() {
+  document.querySelectorAll(".strategy-pills .pill").forEach(p => {
+    p.addEventListener("click", () => setActiveStrategy(p.dataset.strategy));
   });
 }
 
@@ -398,19 +464,10 @@ async function submitCash() {
   newCash.last_contribution_date = date;
 
   const newTxns = [...state.transactions, {
-    date, action: "DEPOSIT", ticker: "", shares: 0, price: 0, amount: amt,
+    date, action: "DEPOSIT", ticker: "", shares: 0, price: 0, amount: amt, strategy: "",
   }];
 
-  const tmpState = { ...state, cash: newCash, transactions: newTxns };
-  const txnsCsv = csvStringify(
-    tmpState.transactions.map(t => ({
-      date: t.date, action: t.action, ticker: t.ticker || "",
-      shares: t.shares ? t.shares.toFixed(6).replace(/\.?0+$/, "") : "0",
-      price: t.price ? t.price.toFixed(4).replace(/\.?0+$/, "") : "0",
-      amount: (t.amount || 0).toFixed(2),
-    })),
-    ["date", "action", "ticker", "shares", "price", "amount"]
-  );
+  const txnsCsv = serializeTransactions(newTxns);
 
   const btn = document.getElementById("cash-submit");
   btn.disabled = true; btn.textContent = "Commit...";
@@ -437,13 +494,14 @@ async function submitBuy() {
   const shares = parseFloat(document.getElementById("buy-shares").value);
   const price = parseFloat(document.getElementById("buy-price").value);
   const date = document.getElementById("buy-date").value || todayIso();
+  const strategy = buyStrategySelected();
   if (!tk || !shares || !price) { toast("Fill all fields", "bad"); return; }
   if (!getToken()) { showTokenSetup(true); toast("Add token first", "bad"); return; }
   const amount = shares * price;
 
-  // Update positions
+  // Each (ticker, strategy) pair is its own position so DCF and GPM stay separate
   const newPositions = [...state.positions];
-  const existing = newPositions.find(p => p.ticker === tk);
+  const existing = newPositions.find(p => p.ticker === tk && p.strategy === strategy);
   const sector = document.getElementById("buy-ticker").dataset.selectedSector
                  || (state.tickerIndex.find(x => x.t === tk) || {}).s
                  || (existing ? existing.sector : "Other");
@@ -454,35 +512,17 @@ async function submitBuy() {
   } else {
     newPositions.push({
       ticker: tk, shares, cost_basis: amount,
-      first_buy_date: date, sector,
+      first_buy_date: date, sector, strategy,
     });
   }
 
   const newTxns = [...state.transactions, {
-    date, action: "BUY", ticker: tk, shares, price, amount,
+    date, action: "BUY", ticker: tk, shares, price, amount, strategy,
   }];
   const newCash = { ...state.cash, cash: (state.cash.cash || 0) - amount };
 
-  const tmpState = { ...state, positions: newPositions, transactions: newTxns, cash: newCash };
-  const posCsv = csvStringify(
-    tmpState.positions.map(p => ({
-      ticker: p.ticker,
-      shares: p.shares.toFixed(6).replace(/\.?0+$/, ""),
-      cost_basis: p.cost_basis.toFixed(2),
-      first_buy_date: p.first_buy_date,
-      sector: p.sector,
-    })),
-    ["ticker", "shares", "cost_basis", "first_buy_date", "sector"]
-  );
-  const txnsCsv = csvStringify(
-    tmpState.transactions.map(t => ({
-      date: t.date, action: t.action, ticker: t.ticker || "",
-      shares: t.shares ? t.shares.toFixed(6).replace(/\.?0+$/, "") : "0",
-      price: t.price ? t.price.toFixed(4).replace(/\.?0+$/, "") : "0",
-      amount: (t.amount || 0).toFixed(2),
-    })),
-    ["date", "action", "ticker", "shares", "price", "amount"]
-  );
+  const posCsv = serializePositions(newPositions);
+  const txnsCsv = serializeTransactions(newTxns);
 
   const btn = document.getElementById("buy-submit");
   btn.disabled = true; btn.textContent = "Commit...";
@@ -491,7 +531,7 @@ async function submitBuy() {
       "positions.csv": posCsv,
       "transactions.csv": txnsCsv,
       "cash.json": JSON.stringify(newCash, null, 2) + "\n",
-    }, `BUY ${tk}: ${shares} @ $${price} on ${date}`);
+    }, `BUY ${tk} [${strategy}]: ${shares} @ $${price} on ${date}`);
     state.positions = newPositions;
     state.transactions = newTxns;
     state.cash = newCash;
@@ -503,7 +543,7 @@ async function submitBuy() {
     renderTransactions();
     refreshSellDropdown();
     updateBuySummary();
-    toast(`BUY ${tk}: ${shares} × ${fmtMoney(price)} = ${fmtMoney(amount)}`, "good");
+    toast(`BUY ${tk} [${strategy.toUpperCase()}]: ${shares} × ${fmtMoney(price)} = ${fmtMoney(amount)}`, "good");
   } catch (e) {
     toast("Commit error: " + e.message, "bad");
   } finally {
@@ -512,14 +552,15 @@ async function submitBuy() {
 }
 
 async function submitSell() {
-  const tk = document.getElementById("sell-ticker").value;
+  const key = document.getElementById("sell-ticker").value;
   const shares = parseFloat(document.getElementById("sell-shares").value);
   const price = parseFloat(document.getElementById("sell-price").value);
   const date = document.getElementById("sell-date").value || todayIso();
-  if (!tk || !shares || !price) { toast("Fill all fields", "bad"); return; }
+  if (!key || !shares || !price) { toast("Fill all fields", "bad"); return; }
   if (!getToken()) { showTokenSetup(true); toast("Add token first", "bad"); return; }
 
-  const pos = state.positions.find(p => p.ticker === tk);
+  const [tk, strat] = key.split("|");
+  const pos = state.positions.find(p => p.ticker === tk && p.strategy === strat);
   if (!pos || pos.shares < shares) { toast("Not enough shares in position", "bad"); return; }
 
   const proceeds = shares * price;
@@ -528,7 +569,7 @@ async function submitSell() {
 
   const newPositions = state.positions
     .map(p => {
-      if (p.ticker !== tk) return p;
+      if (p.ticker !== tk || p.strategy !== strat) return p;
       const remaining_shares = p.shares - shares;
       if (remaining_shares < 1e-6) return null; // delete fully closed
       return { ...p, shares: remaining_shares, cost_basis: p.cost_basis - cost_removed };
@@ -536,30 +577,12 @@ async function submitSell() {
     .filter(Boolean);
 
   const newTxns = [...state.transactions, {
-    date, action: "SELL", ticker: tk, shares, price, amount: proceeds,
+    date, action: "SELL", ticker: tk, shares, price, amount: proceeds, strategy: strat,
   }];
   const newCash = { ...state.cash, cash: (state.cash.cash || 0) + proceeds };
 
-  const tmpState = { ...state, positions: newPositions, transactions: newTxns, cash: newCash };
-  const posCsv = csvStringify(
-    tmpState.positions.map(p => ({
-      ticker: p.ticker,
-      shares: p.shares.toFixed(6).replace(/\.?0+$/, ""),
-      cost_basis: p.cost_basis.toFixed(2),
-      first_buy_date: p.first_buy_date,
-      sector: p.sector,
-    })),
-    ["ticker", "shares", "cost_basis", "first_buy_date", "sector"]
-  );
-  const txnsCsv = csvStringify(
-    tmpState.transactions.map(t => ({
-      date: t.date, action: t.action, ticker: t.ticker || "",
-      shares: t.shares ? t.shares.toFixed(6).replace(/\.?0+$/, "") : "0",
-      price: t.price ? t.price.toFixed(4).replace(/\.?0+$/, "") : "0",
-      amount: (t.amount || 0).toFixed(2),
-    })),
-    ["date", "action", "ticker", "shares", "price", "amount"]
-  );
+  const posCsv = serializePositions(newPositions);
+  const txnsCsv = serializeTransactions(newTxns);
 
   const btn = document.getElementById("sell-submit");
   btn.disabled = true; btn.textContent = "Commit...";
@@ -568,7 +591,7 @@ async function submitSell() {
       "positions.csv": posCsv,
       "transactions.csv": txnsCsv,
       "cash.json": JSON.stringify(newCash, null, 2) + "\n",
-    }, `SELL ${tk}: ${shares} @ $${price} on ${date}`);
+    }, `SELL ${tk} [${strat}]: ${shares} @ $${price} on ${date}`);
     state.positions = newPositions;
     state.transactions = newTxns;
     state.cash = newCash;
@@ -578,7 +601,7 @@ async function submitSell() {
     renderTransactions();
     refreshSellDropdown();
     updateSellSummary();
-    toast(`SELL ${tk}: ${shares} × ${fmtMoney(price)} = ${fmtMoney(proceeds)}`, "good");
+    toast(`SELL ${tk} [${strat.toUpperCase()}]: ${shares} × ${fmtMoney(price)} = ${fmtMoney(proceeds)}`, "good");
   } catch (e) {
     toast("Commit error: " + e.message, "bad");
   } finally {
@@ -604,7 +627,7 @@ function normalizeHeader(h) {
   return null;
 }
 
-function parseImportCsv(text) {
+function parseImportCsv(text, strategy) {
   const { headers, rows } = csvParse(text);
   const colMap = {};
   headers.forEach((h, i) => {
@@ -624,16 +647,15 @@ function parseImportCsv(text) {
     const price = parseFloat(r[Object.keys(r)[colMap.price]] || "0");
     if (!shares || !price) continue;
     let date = r[Object.keys(r)[colMap.date]] || todayIso();
-    // Normalize date: try YYYY-MM-DD, DD/MM/YYYY, etc.
     date = date.split("T")[0].replace(/[./]/g, "-");
     if (/^\d{2}-\d{2}-\d{4}$/.test(date)) {
-      // Assume DD-MM-YYYY
       const [d, m, y] = date.split("-");
       date = `${y}-${m}-${d}`;
     }
     out.push({
       date, action: isBuy ? "BUY" : "SELL",
       ticker, shares, price, amount: shares * price,
+      strategy,
     });
   }
   return out;
@@ -646,7 +668,9 @@ function previewCsv(rows) {
     document.getElementById("csv-submit").classList.add("hidden");
     return;
   }
-  div.innerHTML = '<div class="preview-row header"><div>Date</div><div>Action</div><div>Ticker</div><div>Shares</div><div>Price</div><div>Amount</div></div>';
+  const stratLabel = (rows[0] && rows[0].strategy ? rows[0].strategy.toUpperCase() : "DCF");
+  div.innerHTML = `<p class="muted">Tagging all rows as <strong>${stratLabel}</strong>.</p>` +
+    '<div class="preview-row header"><div>Date</div><div>Action</div><div>Ticker</div><div>Shares</div><div>Price</div><div>Amount</div></div>';
   for (const r of rows) {
     const row = document.createElement("div");
     row.className = "preview-row";
@@ -672,7 +696,7 @@ async function commitCsvImport() {
 
   for (const r of state.pendingCsvRows) {
     if (r.action === "BUY") {
-      const existing = newPositions.find(p => p.ticker === r.ticker);
+      const existing = newPositions.find(p => p.ticker === r.ticker && p.strategy === r.strategy);
       const sector = (state.tickerIndex.find(x => x.t === r.ticker) || {}).s
                      || (existing ? existing.sector : "Other");
       if (existing) {
@@ -682,13 +706,13 @@ async function commitCsvImport() {
       } else {
         newPositions.push({
           ticker: r.ticker, shares: r.shares, cost_basis: r.amount,
-          first_buy_date: r.date, sector,
+          first_buy_date: r.date, sector, strategy: r.strategy,
         });
       }
       newCash.cash -= r.amount;
       newTxns.push(r);
     } else if (r.action === "SELL") {
-      const idx = newPositions.findIndex(p => p.ticker === r.ticker);
+      const idx = newPositions.findIndex(p => p.ticker === r.ticker && p.strategy === r.strategy);
       if (idx >= 0) {
         const pos = newPositions[idx];
         const cps = pos.cost_basis / pos.shares;
@@ -705,34 +729,18 @@ async function commitCsvImport() {
     }
   }
 
-  const posCsv = csvStringify(
-    newPositions.map(p => ({
-      ticker: p.ticker,
-      shares: p.shares.toFixed(6).replace(/\.?0+$/, ""),
-      cost_basis: p.cost_basis.toFixed(2),
-      first_buy_date: p.first_buy_date,
-      sector: p.sector,
-    })),
-    ["ticker", "shares", "cost_basis", "first_buy_date", "sector"]
-  );
-  const txnsCsv = csvStringify(
-    newTxns.map(t => ({
-      date: t.date, action: t.action, ticker: t.ticker || "",
-      shares: t.shares ? t.shares.toFixed(6).replace(/\.?0+$/, "") : "0",
-      price: t.price ? t.price.toFixed(4).replace(/\.?0+$/, "") : "0",
-      amount: (t.amount || 0).toFixed(2),
-    })),
-    ["date", "action", "ticker", "shares", "price", "amount"]
-  );
+  const posCsv = serializePositions(newPositions);
+  const txnsCsv = serializeTransactions(newTxns);
 
   const btn = document.getElementById("csv-submit");
   btn.disabled = true; btn.textContent = "Commit...";
+  const importedCount = state.pendingCsvRows.length;
   try {
     await ghCommitMultiFile({
       "positions.csv": posCsv,
       "transactions.csv": txnsCsv,
       "cash.json": JSON.stringify(newCash, null, 2) + "\n",
-    }, `CSV import: ${state.pendingCsvRows.length} transactions`);
+    }, `CSV import: ${importedCount} transactions`);
     state.positions = newPositions;
     state.transactions = newTxns;
     state.cash = newCash;
@@ -743,7 +751,7 @@ async function commitCsvImport() {
     renderPortfolio();
     renderTransactions();
     refreshSellDropdown();
-    toast(`${state.pendingCsvRows ? state.pendingCsvRows.length : "?"} transactions committed`, "good");
+    toast(`${importedCount} transactions committed`, "good");
   } catch (e) {
     toast("Commit error: " + e.message, "bad");
   } finally {
@@ -754,6 +762,7 @@ async function commitCsvImport() {
 // ---------- Bootstrap ----------
 async function init() {
   setupTabs();
+  setupStrategyPills();
   setupTickerSearch();
   await loadTickerIndex();
 
@@ -788,7 +797,7 @@ async function init() {
 
   ["buy-shares", "buy-price"].forEach(id =>
     document.getElementById(id).addEventListener("input", updateBuySummary));
-  ["sell-ticker", "sell-shares", "sell-price"].forEach(id =>
+  ["sell-shares", "sell-price"].forEach(id =>
     document.getElementById(id).addEventListener("input", updateSellSummary));
   document.getElementById("sell-ticker").addEventListener("change", updateSellSummary);
 
@@ -796,7 +805,7 @@ async function init() {
     const f = e.target.files[0];
     if (!f) return;
     const text = await f.text();
-    state.pendingCsvRows = parseImportCsv(text);
+    state.pendingCsvRows = parseImportCsv(text, csvStrategySelected());
     previewCsv(state.pendingCsvRows);
   });
 
