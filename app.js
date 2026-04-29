@@ -161,6 +161,10 @@ function normalizeStrategy(s) {
   const v = (s || "").toString().trim().toLowerCase();
   return v || "gpm";
 }
+// Hard-coded single strategy now that the radio is gone — keeping these
+// helpers as one-liners avoids touching every call site.
+function buyStrategySelected() { return "gpm"; }
+function csvStrategySelected() { return "gpm"; }
 
 // ---------- GitHub API ----------
 async function ghFetchRaw(path) {
