@@ -26,7 +26,16 @@ const state = {
   // get free-form names like "personal-picks" or "ai-bets".
   activePortfolio: localStorage.getItem("ws_active_portfolio") || "__all__",
   portfolios: ["gpm"],   // populated from positions/transactions on load
+  // Per-portfolio metadata (currency, etc.) — stored in localStorage so the
+  // setting persists without needing a state-repo round-trip every time.
+  // Default: gpm = USD. Custom portfolios get whatever the user picked.
+  portfolioMeta: (() => {
+    try { return JSON.parse(localStorage.getItem("ws_portfolio_meta") || "{}") || {}; }
+    catch { return {}; }
+  })(),
 };
+// Ensure gpm has a default currency entry
+if (!state.portfolioMeta.gpm) state.portfolioMeta.gpm = { currency: "USD" };
 
 // ---------- Toast ----------
 function toast(msg, kind = "") {
@@ -240,6 +249,7 @@ function setupPortfolioBar() {
     } else if (btn.dataset.act === "newport-create") {
       const name = (document.getElementById("newport-name").value || "")
         .trim().toLowerCase();
+      const currency = document.getElementById("newport-currency").value || "USD";
       if (!isValidPortfolioName(name)) {
         toast("Use lowercase letters/digits/dashes (max 40 chars, must start with letter/digit)", "bad");
         return;
@@ -249,9 +259,14 @@ function setupPortfolioBar() {
         return;
       }
       state.portfolios = [...state.portfolios, name].sort();
+      state.portfolioMeta = state.portfolioMeta || {};
+      state.portfolioMeta[name] = { currency };
+      // Persist metadata in localStorage (lightweight; no backend round-trip)
+      localStorage.setItem("ws_portfolio_meta", JSON.stringify(state.portfolioMeta));
       document.getElementById("newport-modal").classList.add("hidden");
       setActivePortfolio(name);
-      toast(`Portfolio "${name}" ready — log a buy to populate it`, "good");
+      const sym = currency === "EUR" ? "€" : "$";
+      toast(`Portfolio "${name}" (${sym}${currency}) ready — log a buy to populate`, "good");
     }
   });
 }
@@ -460,8 +475,20 @@ function serializeTransactions(txns) {
 }
 
 // ---------- Render ----------
-function fmtMoney(v) {
-  return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(v);
+function activeCurrency() {
+  // "All portfolios" view: show $ (mixed currencies aren't summable; we stick
+  // with USD as the lowest-friction default until user filters to a single one).
+  const a = state.activePortfolio;
+  if (!a || a === "__all__") return "USD";
+  return state.portfolioMeta?.[a]?.currency || "USD";
+}
+function curSym(cur) { return cur === "EUR" ? "€" : "$"; }
+function fmtMoney(v, cur) {
+  cur = cur || activeCurrency();
+  return new Intl.NumberFormat("en-US", {
+    style: "currency", currency: cur,
+    minimumFractionDigits: 0, maximumFractionDigits: 0,
+  }).format(v);
 }
 
 function fmtNum(v, dp = 2) {

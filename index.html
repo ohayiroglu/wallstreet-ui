@@ -187,8 +187,14 @@
         <label>Name:
           <input type="text" id="newport-name" placeholder="e.g. personal-picks" autocomplete="off" maxlength="40" style="text-transform:lowercase;">
         </label>
+        <label>Currency:
+          <select id="newport-currency">
+            <option value="USD">$ USD</option>
+            <option value="EUR">€ EUR</option>
+          </select>
+        </label>
       </div>
-      <p class="muted" style="font-size:12px;margin-top:0;">Lowercase letters, digits, dashes. Will become the active portfolio after creation; transactions you log next will be tagged here.</p>
+      <p class="muted" style="font-size:12px;margin-top:0;">Currency drives how amounts are displayed in this portfolio. Lowercase letters / digits / dashes for the name (max 40 chars).</p>
       <div class="modal-actions">
         <button class="muted-btn" data-act="newport-cancel">Cancel</button>
         <button class="primary" data-act="newport-create">Create</button>
@@ -238,6 +244,6 @@
   </footer>
 </div>
 
-<script src="app.js?v=20260429j"></script>
+<script src="app.js?v=20260429k"></script>
 </body>
 </html>
