@@ -317,6 +317,7 @@ function parsePositions(text) {
     first_buy_date: r.first_buy_date || "",
     sector: r.sector || "",
     strategy: normalizeStrategy(r.strategy),
+    isin: (r.isin || "").trim().toUpperCase(),
   }));
 }
 
@@ -331,6 +332,7 @@ function parseTransactions(text) {
     amount: parseFloat(r.amount) || 0,
     // DEPOSIT rows have no strategy (cash pool is shared); keep blank for those
     strategy: r.action === "DEPOSIT" ? "" : normalizeStrategy(r.strategy),
+    isin: (r.isin || "").trim().toUpperCase(),
   }));
 }
 
@@ -343,8 +345,9 @@ function serializePositions(positions) {
       first_buy_date: p.first_buy_date,
       sector: p.sector,
       strategy: p.strategy || "gpm",
+      isin: p.isin || "",
     })),
-    ["ticker", "shares", "cost_basis", "first_buy_date", "sector", "strategy"]
+    ["ticker", "shares", "cost_basis", "first_buy_date", "sector", "strategy", "isin"]
   );
 }
 
@@ -358,8 +361,9 @@ function serializeTransactions(txns) {
       price: t.price ? t.price.toFixed(4).replace(/\.?0+$/, "") : "0",
       amount: (t.amount || 0).toFixed(2),
       strategy: t.action === "DEPOSIT" ? "" : (t.strategy || "gpm"),
+      isin: t.isin || "",
     })),
-    ["date", "action", "ticker", "shares", "price", "amount", "strategy"]
+    ["date", "action", "ticker", "shares", "price", "amount", "strategy", "isin"]
   );
 }
 
@@ -612,12 +616,12 @@ async function submitBuy() {
   const shares = parseFloat(document.getElementById("buy-shares").value);
   const price = parseFloat(document.getElementById("buy-price").value);
   const date = document.getElementById("buy-date").value || todayIso();
+  const isin = (document.getElementById("buy-isin").value || "").trim().toUpperCase();
   const strategy = buyStrategySelected();
   if (!tk || !shares || !price) { toast("Fill all fields", "bad"); return; }
   if (!getToken()) { showTokenSetup(true); toast("Add token first", "bad"); return; }
   const amount = shares * price;
 
-  // Each (ticker, strategy) pair is its own position so DCF and GPM stay separate
   const newPositions = [...state.positions];
   const existing = newPositions.find(p => p.ticker === tk && p.strategy === strategy);
   const sector = document.getElementById("buy-ticker").dataset.selectedSector
@@ -627,15 +631,16 @@ async function submitBuy() {
     existing.shares = (existing.shares || 0) + shares;
     existing.cost_basis = (existing.cost_basis || 0) + amount;
     if (!existing.first_buy_date) existing.first_buy_date = date;
+    if (isin && !existing.isin) existing.isin = isin;
   } else {
     newPositions.push({
       ticker: tk, shares, cost_basis: amount,
-      first_buy_date: date, sector, strategy,
+      first_buy_date: date, sector, strategy, isin,
     });
   }
 
   const newTxns = [...state.transactions, {
-    date, action: "BUY", ticker: tk, shares, price, amount, strategy,
+    date, action: "BUY", ticker: tk, shares, price, amount, strategy, isin,
   }];
 
   const posCsv = serializePositions(newPositions);
@@ -653,6 +658,7 @@ async function submitBuy() {
     document.getElementById("buy-shares").value = "";
     document.getElementById("buy-price").value = "";
     document.getElementById("buy-ticker").value = "";
+    document.getElementById("buy-isin").value = "";
     delete document.getElementById("buy-ticker").dataset.selectedTicker;
     renderPortfolio();
     renderTransactions();
@@ -724,12 +730,16 @@ async function submitSell() {
 // ---------- CSV Import ----------
 // Aliases cover both T212 web export (Action / Time / Ticker / No. of shares /
 // Price / share / Gross Total) and Trade Republic / Parqet exports.
+// Note: TR's `symbol` column IS the ISIN; T212 has both `Ticker` and `ISIN`.
+// We capture them separately so the Parqet export can put ISIN in the symbol
+// field (Parqet's primary lookup key) while the UI keeps using ticker.
 const HEADER_ALIASES = {
-  date: ["date", "tarih", "trade_date", "execution_date", "time", "datetime"],
+  date:   ["date", "tarih", "trade_date", "execution_date", "time", "datetime"],
   action: ["action", "side", "type", "transaction_type", "buy_sell"],
-  ticker: ["ticker", "symbol", "instrument", "isin"],
+  ticker: ["ticker", "instrument"],
+  isin:   ["isin", "symbol"],
   shares: ["shares", "quantity", "qty", "no_of_shares", "number_of_shares"],
-  price: ["price", "exec_price", "share_price", "price_per_share", "price_share"],
+  price:  ["price", "exec_price", "share_price", "price_per_share", "price_share"],
   amount: ["amount", "total", "total_value", "value", "gross_total", "gross_amount"],
 };
 
@@ -781,8 +791,11 @@ function parseImportCsv(text, strategy) {
     const isSell = isSellish(action);
     if (!isBuy && !isSell) { skippedNonTrade++; continue; }
 
-    const tickerOrIsin = (r[headers[colMap.ticker]] || "").toUpperCase().trim();
-    if (!tickerOrIsin) { skippedBadData++; continue; }
+    const tickerVal = colMap.ticker !== undefined ? (r[headers[colMap.ticker]] || "") : "";
+    const isinVal   = colMap.isin   !== undefined ? (r[headers[colMap.isin]]   || "") : "";
+    const ticker = (tickerVal || isinVal).toUpperCase().trim();
+    const isin = isinVal.toUpperCase().trim();
+    if (!ticker) { skippedBadData++; continue; }
 
     const sharesRaw = parseFloat(r[headers[colMap.shares]] || "0");
     const price = parseFloat(r[headers[colMap.price]] || "0");
@@ -801,7 +814,8 @@ function parseImportCsv(text, strategy) {
     out.push({
       date,
       action: isBuy ? "BUY" : "SELL",
-      ticker: tickerOrIsin,
+      ticker,
+      isin,
       shares,
       price,
       amount: shares * price,
@@ -867,10 +881,12 @@ async function commitCsvImport() {
         existing.shares += r.shares;
         existing.cost_basis += r.amount;
         if (!existing.first_buy_date) existing.first_buy_date = r.date;
+        if (r.isin && !existing.isin) existing.isin = r.isin;
       } else {
         newPositions.push({
           ticker: r.ticker, shares: r.shares, cost_basis: r.amount,
           first_buy_date: r.date, sector, strategy: r.strategy,
+          isin: r.isin || "",
         });
       }
       newTxns.push(r);
@@ -934,7 +950,8 @@ function startEditPosition(ticker) {
     <td><input type="text" data-f="sector" value="${p.sector || ""}"></td>
     <td class="num"><input type="number" step="0.0001" data-f="shares" value="${p.shares}"></td>
     <td class="num"><input type="number" step="0.01" data-f="cost_basis" value="${p.cost_basis}"></td>
-    <td colspan="5" class="muted" style="font-size:12px;">live values recompute on save</td>
+    <td colspan="3" class="muted" style="font-size:12px;">live values recompute on save</td>
+    <td colspan="2" class="num"><input type="text" data-f="isin" value="${p.isin || ""}" placeholder="ISIN (optional)" style="text-transform:uppercase;"></td>
     <td class="actions">
       <button class="row-action" data-act="save-pos" data-ticker="${p.ticker}" title="Save">💾</button>
       <button class="row-action" data-act="cancel-pos" title="Cancel">✖</button>
@@ -953,6 +970,7 @@ async function savePositionEdit(ticker) {
     cost_basis: parseFloat(f("cost_basis")) || 0,
     first_buy_date: f("first_buy_date") || p.first_buy_date,
     sector: f("sector") || p.sector,
+    isin: (f("isin") || "").toUpperCase().trim(),
   };
   if (updated.shares <= 0) {
     toast("Shares must be > 0 (use delete to remove the position)", "bad");
@@ -1108,11 +1126,22 @@ function csvQuote(v) {
 function generateParqetCsv() {
   const lines = [PARQET_HEADERS.map(csvQuote).join(",")];
   let n = 0;
+  // Build a position lookup so we can fall back to a position-level ISIN when
+  // a transaction row doesn't carry one (older rows pre-ISIN schema).
+  const positionByTicker = {};
+  for (const p of state.positions) positionByTicker[p.ticker] = p;
+
   for (const t of state.transactions) {
     if (t.action !== "BUY" && t.action !== "SELL") continue;
     const isBuy = t.action === "BUY";
     const meta = state.tickerIndex.find(x => x.t === t.ticker) || {};
     const name = meta.n || t.ticker;
+
+    // Symbol = ISIN per Trade Republic convention. Parqet's primary lookup
+    // key is ISIN; ticker is a weak fallback that often gets rejected.
+    const isin = (t.isin || "").trim().toUpperCase()
+              || (positionByTicker[t.ticker]?.isin || "").trim().toUpperCase();
+    const symbol = isin || t.ticker;
 
     // datetime: noon UTC for determinism (date column is the truth)
     const datetime = `${t.date}T12:00:00.000Z`;
@@ -1124,7 +1153,9 @@ function generateParqetCsv() {
     const amountStr = (isBuy ? -t.amount : t.amount).toFixed(2);
     const priceStr  = t.price.toFixed(10);
 
-    const desc = `${isBuy ? "Buy" : "Sell"} trade ${t.ticker} ${name}, quantity: ${t.shares}`;
+    // Description mirrors Trade Republic format exactly:
+    //   "Buy trade <SYMBOL> <NAME>, quantity: <Q>"
+    const desc = `${isBuy ? "Buy" : "Sell"} trade ${symbol} ${name}, quantity: ${t.shares}`;
 
     const row = [
       datetime,           // datetime
@@ -1134,13 +1165,13 @@ function generateParqetCsv() {
       t.action,           // type (BUY / SELL)
       "STOCK",            // asset_class
       name,               // name
-      t.ticker,           // symbol (ticker — Parqet typically auto-resolves US names)
+      symbol,             // symbol — ISIN preferred, ticker fallback
       sharesStr,          // shares
       priceStr,           // price
       amountStr,          // amount
-      "",                 // fee (we don't track)
+      "",                 // fee (T212 USD has none)
       "",                 // tax
-      "USD",              // currency (T212 USD account)
+      "USD",              // currency
       "",                 // original_amount
       "",                 // original_currency
       "",                 // fx_rate
