@@ -142,21 +142,43 @@ function quoteFromSnapshot(snapshot, ticker) {
   };
 }
 
-// EURUSD=X is Yahoo's spot rate — USD per 1 EUR (~1.07). We fetch this
-// alongside live prices so we can convert USD-denominated quotes (PYPL,
-// SOFI, etc.) into the active portfolio's display currency. If the fetch
-// fails, conversion-needing rows render "—" rather than show a wrong number.
+// EURUSD=X is Yahoo's spot rate — USD per 1 EUR. We fetch this alongside
+// live prices so we can convert USD-denominated quotes (PYPL, SOFI, etc.)
+// into the active portfolio's display currency. Tries Yahoo first; if CORS
+// blocks the FX endpoint (Yahoo can be stricter on `=X` symbols than on
+// equity tickers), falls back to exchangerate.host (no key, CORS-friendly).
+// `source` is recorded so the prices-status footer can show provenance.
 async function fetchFxEurUsd() {
+  // Try Yahoo first — same provider as equity quotes, single source.
   try {
     const url = "https://query1.finance.yahoo.com/v8/finance/chart/EURUSD%3DX?interval=1d&range=2d";
     const res = await fetch(url, { mode: "cors" });
-    if (!res.ok) throw new Error(`fx ${res.status}`);
-    const j = await res.json();
-    const px = Number(j?.chart?.result?.[0]?.meta?.regularMarketPrice);
-    if (px > 0) state.fxRates = { eur_usd: px, ts: Date.now() };
+    if (res.ok) {
+      const j = await res.json();
+      const px = Number(j?.chart?.result?.[0]?.meta?.regularMarketPrice);
+      if (px > 0) {
+        state.fxRates = { eur_usd: px, ts: Date.now(), source: "yahoo" };
+        return;
+      }
+    }
   } catch (e) {
-    console.warn("EURUSD=X fetch failed:", e);
+    console.warn("EURUSD=X (yahoo) failed:", e);
   }
+  // Fallback: exchangerate.host — free, CORS-enabled, no API key.
+  try {
+    const res = await fetch("https://api.exchangerate.host/latest?base=EUR&symbols=USD");
+    if (res.ok) {
+      const j = await res.json();
+      const px = Number(j?.rates?.USD);
+      if (px > 0) {
+        state.fxRates = { eur_usd: px, ts: Date.now(), source: "exchangerate.host" };
+        return;
+      }
+    }
+  } catch (e) {
+    console.warn("EURUSD (exchangerate.host) failed:", e);
+  }
+  console.warn("All FX sources failed — totals on EUR portfolio will be incomplete");
 }
 
 // Convert a price between EUR and USD. Returns null if rate isn't loaded
@@ -220,6 +242,13 @@ async function refreshLivePrices() {
   else if (haveSnap && snapshotInfo) {
     label = `${ok}/${tickers.length} from daily snapshot — asof ${snapshotInfo.asof}`;
   } else if (ok === 0) label = `Could not load prices (Yahoo CORS blocked, snapshot empty)`;
+  // Surface FX rate provenance — needed for the EUR view; "FX —" tells the
+  // user that USD-listed totals will be missing.
+  if (state.fxRates?.eur_usd) {
+    label += ` • FX EURUSD ${state.fxRates.eur_usd.toFixed(4)} (${state.fxRates.source})`;
+  } else {
+    label += ` • FX — (USD→EUR conversion unavailable)`;
+  }
   status.textContent = label;
   renderPortfolio();
 }
