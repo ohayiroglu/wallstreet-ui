@@ -104,7 +104,10 @@ const YAHOO_SYMBOL_OVERRIDES = {
   "BRK.B": "BRK-B",
   "CSPX":  "SXR8.DE",  // iShares Core S&P 500 UCITS — Xetra EUR listing
   "IUIT":  "QDVE.DE",  // iShares S&P 500 IT  UCITS — Xetra EUR listing
-  "CW8":   "CW8.PA",   // Amundi MSCI World V        — Euronext Paris EUR
+  "CW8":   "LCUW.DE",  // Amundi MSCI World V (LU1781541179) — Xetra EUR.
+                       // NOTE: CW8.PA is a *different* Amundi fund (Swap
+                       // MSCI World, ~€634) — wrong instrument for TR's
+                       // V-class shares which trade in the €15-€20 range.
   "WEBN":  "MWRE.DE",  // Amundi Core MSCI World UCITS Acc — Xetra EUR
 };
 function toYahooSymbol(ticker) {
