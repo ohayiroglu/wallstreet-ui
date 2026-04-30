@@ -95,16 +95,17 @@ function showTokenSetup(visible) {
 
 // Yahoo uses different symbols than what TR/our display shows:
 //   - Class-share US tickers replace `.` with `-` (BRK.B → BRK-B).
-//   - UCITS ETFs need an exchange suffix to resolve (CSPX → CSPX.L, the
-//     iShares Core S&P 500 UCITS on London; CW8 → CW8.PA on Euronext
-//     Paris). Without the suffix Yahoo returns no data.
+//   - UCITS ETFs need an exchange suffix. TR settles trades through
+//     Xetra/Lang&Schwarz, so the user's avg cost is in EUR — match the
+//     Xetra (EUR-quoted) listing rather than the LSE (USD) one to avoid
+//     unnecessary FX round-trip + currency mismatch with cost basis.
 // Display ticker stays unchanged; only the network call uses the override.
 const YAHOO_SYMBOL_OVERRIDES = {
   "BRK.B": "BRK-B",
-  "CSPX":  "CSPX.L",   // iShares Core S&P 500 UCITS (USD-quoted on LSE)
-  "IUIT":  "IUIT.L",   // iShares S&P 500 IT UCITS   (USD-quoted on LSE)
-  "CW8":   "CW8.PA",   // Amundi MSCI World V        (EUR-quoted on Euronext)
-  "WEBN":  "WEBN.PA",  // Amundi MSCI World Acc      (EUR-quoted on Euronext)
+  "CSPX":  "SXR8.DE",  // iShares Core S&P 500 UCITS — Xetra EUR listing
+  "IUIT":  "QDVE.DE",  // iShares S&P 500 IT  UCITS — Xetra EUR listing
+  "CW8":   "CW8.PA",   // Amundi MSCI World V        — Euronext Paris EUR
+  "WEBN":  "WEBN.PA",  // Amundi MSCI World Acc      — Euronext Paris EUR
 };
 function toYahooSymbol(ticker) {
   return YAHOO_SYMBOL_OVERRIDES[ticker] || ticker;
