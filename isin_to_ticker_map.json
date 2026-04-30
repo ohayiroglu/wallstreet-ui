@@ -36,5 +36,17 @@
 
   "US7731211089": {"ticker": "RKLB",  "name": "Rocket Lab",                          "sector": "Industrials"},
   "US00217D1000": {"ticker": "ASTS",  "name": "AST SpaceMobile",                     "sector": "Communication Services"},
-  "US30303M1027": {"ticker": "META",  "name": "Meta Platforms (A)",                  "sector": "Communication Services"}
+  "US30303M1027": {"ticker": "META",  "name": "Meta Platforms (A)",                  "sector": "Communication Services"},
+
+  "US6877931096": {"ticker": "OSCR",   "name": "Oscar Health",                       "sector": "Health Care"},
+  "US0021202025": {"ticker": "ATYR",   "name": "aTyr Pharma",                        "sector": "Health Care"},
+  "US35952H6018": {"ticker": "FCEL",   "name": "FuelCell Energy",                    "sector": "Industrials"},
+  "KYG6683N1034": {"ticker": "NU",     "name": "Nu Holdings",                        "sector": "Financials"},
+  "DE0005190003": {"ticker": "BMW.DE", "name": "BMW AG",                             "sector": "Consumer Discretionary"},
+  "FR0011981968": {"ticker": "WLN.PA", "name": "Worldline SA",                       "sector": "Information Technology"},
+
+  "IE00BLRPRK35": {"ticker": "IE00BLRPRK35", "name": "Brent Crude 3x Short USD ETP",  "sector": "Other"},
+  "XS3306517098": {"ticker": "XS3306517098", "name": "WisdomTree Oil 3x Short ETP",   "sector": "Other"},
+  "DE000HM4EP32": {"ticker": "DE000HM4EP32", "name": "HSBC Turbo Warrant",            "sector": "Other"},
+  "DE000VJ1BPR1": {"ticker": "DE000VJ1BPR1", "name": "Vontobel Turbo Warrant",        "sector": "Other"}
 }

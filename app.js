@@ -33,6 +33,25 @@ const state = {
     catch { return {}; }
   })(),
 };
+
+// One-time migration: drop stale `currency: "USD"` overrides on portfolios
+// whose name auto-detects to EUR (TR/TradeRepublic). The Edit-modal default
+// silently saved USD when opened, hijacking the EUR auto-detect; this fixes
+// existing localStorage so users don't have to manually re-edit.
+(() => {
+  let dirty = false;
+  for (const [name, meta] of Object.entries(state.portfolioMeta || {})) {
+    if (!meta || typeof meta !== "object") continue;
+    if (meta.currency === "USD" && /traderepublic|tradrepublic|^tr_/i.test(name)) {
+      delete meta.currency;
+      if (Object.keys(meta).length === 0) delete state.portfolioMeta[name];
+      dirty = true;
+    }
+  }
+  if (dirty) {
+    localStorage.setItem("ws_portfolio_meta", JSON.stringify(state.portfolioMeta));
+  }
+})();
 // (No hardcoded portfolio defaults — buckets come from actual CSV data only.)
 
 // ---------- Toast ----------
@@ -253,8 +272,11 @@ function setupPortfolioBar() {
     }
     document.getElementById("renameport-old").value = cur;
     document.getElementById("renameport-new").value = cur;
+    // Default to explicit override → else auto-detect (TR names → EUR).
+    // Avoids the "Save" button silently locking USD onto an EUR portfolio
+    // just because the user opened the Edit modal.
     document.getElementById("renameport-currency").value =
-      state.portfolioMeta?.[cur]?.currency || "USD";
+      state.portfolioMeta?.[cur]?.currency || autoCurrencyForName(cur);
     document.getElementById("renameport-modal").classList.remove("hidden");
     setTimeout(() => {
       const inp = document.getElementById("renameport-new");
@@ -302,7 +324,8 @@ async function renamePortfolio() {
   const oldName = document.getElementById("renameport-old").value;
   const newName = (document.getElementById("renameport-new").value || "").trim();
   const newCurrency = document.getElementById("renameport-currency").value || "USD";
-  const oldCurrency = state.portfolioMeta?.[oldName]?.currency || "USD";
+  const oldCurrency = state.portfolioMeta?.[oldName]?.currency
+    || autoCurrencyForName(oldName);
 
   if (!isValidPortfolioName(newName)) {
     toast("Letters / digits / dashes / underscores (max 40 chars, must start with letter/digit)", "bad");
@@ -617,6 +640,11 @@ function serializeTransactions(txns) {
 }
 
 // ---------- Render ----------
+// Auto-detect currency from portfolio name (no explicit override).
+// TR/TradeRepublic imports are always EUR; everything else defaults USD.
+function autoCurrencyForName(name) {
+  return /traderepublic|tradrepublic|^tr_/i.test(name || "") ? "EUR" : "USD";
+}
 function activeCurrency() {
   // "All portfolios" view: show $ (mixed currencies aren't summable; we stick
   // with USD as the lowest-friction default until user filters to a single one).
@@ -625,10 +653,7 @@ function activeCurrency() {
   // Explicit user override wins.
   const meta = state.portfolioMeta?.[a];
   if (meta?.currency) return meta.currency;
-  // Auto-detect by name for portfolios discovered from imported CSVs (where
-  // the user never went through the New-portfolio modal). TR/TradeRepublic
-  // imports are always EUR; everything else defaults USD.
-  return /traderepublic|tradrepublic|^tr_/i.test(a) ? "EUR" : "USD";
+  return autoCurrencyForName(a);
 }
 function curSym(cur) { return cur === "EUR" ? "€" : "$"; }
 function fmtMoney(v, cur) {
