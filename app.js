@@ -105,7 +105,7 @@ const YAHOO_SYMBOL_OVERRIDES = {
   "CSPX":  "SXR8.DE",  // iShares Core S&P 500 UCITS — Xetra EUR listing
   "IUIT":  "QDVE.DE",  // iShares S&P 500 IT  UCITS — Xetra EUR listing
   "CW8":   "CW8.PA",   // Amundi MSCI World V        — Euronext Paris EUR
-  "WEBN":  "WEBN.PA",  // Amundi MSCI World Acc      — Euronext Paris EUR
+  "WEBN":  "MWRE.DE",  // Amundi Core MSCI World UCITS Acc — Xetra EUR
 };
 function toYahooSymbol(ticker) {
   return YAHOO_SYMBOL_OVERRIDES[ticker] || ticker;
