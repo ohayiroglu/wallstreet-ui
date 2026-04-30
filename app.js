@@ -144,39 +144,46 @@ function quoteFromSnapshot(snapshot, ticker) {
 
 // EURUSD=X is Yahoo's spot rate — USD per 1 EUR. We fetch this alongside
 // live prices so we can convert USD-denominated quotes (PYPL, SOFI, etc.)
-// into the active portfolio's display currency. Tries Yahoo first; if CORS
-// blocks the FX endpoint (Yahoo can be stricter on `=X` symbols than on
-// equity tickers), falls back to exchangerate.host (no key, CORS-friendly).
-// `source` is recorded so the prices-status footer can show provenance.
+// into the active portfolio's display currency. Multi-source fallback chain
+// because Yahoo's `=X` endpoint is often CORS-blocked in the browser, and
+// exchangerate.host moved behind an API key in 2024:
+//   1. Yahoo  (same source as equity quotes — preferred)
+//   2. Frankfurter (ECB reference rates, free, CORS-enabled, no API key)
+//   3. jsdelivr currency-api (static JSON on a CDN — last-resort, always
+//      reachable since it's just a CDN GET)
+// `source` is recorded so the prices-status footer shows provenance.
 async function fetchFxEurUsd() {
-  // Try Yahoo first — same provider as equity quotes, single source.
-  try {
-    const url = "https://query1.finance.yahoo.com/v8/finance/chart/EURUSD%3DX?interval=1d&range=2d";
-    const res = await fetch(url, { mode: "cors" });
-    if (res.ok) {
+  const sources = [
+    {
+      name: "yahoo",
+      url: "https://query1.finance.yahoo.com/v8/finance/chart/EURUSD%3DX?interval=1d&range=2d",
+      pick: (j) => Number(j?.chart?.result?.[0]?.meta?.regularMarketPrice),
+    },
+    {
+      name: "frankfurter",
+      url: "https://api.frankfurter.app/latest?from=EUR&to=USD",
+      pick: (j) => Number(j?.rates?.USD),
+    },
+    {
+      name: "jsdelivr-cdn",
+      url: "https://cdn.jsdelivr.net/npm/@fawazahmed0/currency-api@latest/v1/currencies/eur.json",
+      pick: (j) => Number(j?.eur?.usd),
+    },
+  ];
+  for (const s of sources) {
+    try {
+      const res = await fetch(s.url, { mode: "cors" });
+      if (!res.ok) { console.warn(`FX ${s.name} HTTP ${res.status}`); continue; }
       const j = await res.json();
-      const px = Number(j?.chart?.result?.[0]?.meta?.regularMarketPrice);
-      if (px > 0) {
-        state.fxRates = { eur_usd: px, ts: Date.now(), source: "yahoo" };
+      const px = s.pick(j);
+      if (px > 0 && isFinite(px)) {
+        state.fxRates = { eur_usd: px, ts: Date.now(), source: s.name };
         return;
       }
+      console.warn(`FX ${s.name} returned non-positive rate:`, px);
+    } catch (e) {
+      console.warn(`FX ${s.name} failed:`, e);
     }
-  } catch (e) {
-    console.warn("EURUSD=X (yahoo) failed:", e);
-  }
-  // Fallback: exchangerate.host — free, CORS-enabled, no API key.
-  try {
-    const res = await fetch("https://api.exchangerate.host/latest?base=EUR&symbols=USD");
-    if (res.ok) {
-      const j = await res.json();
-      const px = Number(j?.rates?.USD);
-      if (px > 0) {
-        state.fxRates = { eur_usd: px, ts: Date.now(), source: "exchangerate.host" };
-        return;
-      }
-    }
-  } catch (e) {
-    console.warn("EURUSD (exchangerate.host) failed:", e);
   }
   console.warn("All FX sources failed — totals on EUR portfolio will be incomplete");
 }
