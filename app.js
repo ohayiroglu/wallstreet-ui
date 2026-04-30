@@ -92,8 +92,27 @@ function showTokenSetup(visible) {
 //   1. Try Yahoo's CORS endpoint per ticker (works in some browsers/regions).
 //   2. Fall back to prices.json snapshot committed daily by the GH Actions
 //      "Daily Prices Snapshot" workflow.
+
+// Yahoo uses different symbols than what TR/our display shows:
+//   - Class-share US tickers replace `.` with `-` (BRK.B → BRK-B).
+//   - UCITS ETFs need an exchange suffix to resolve (CSPX → CSPX.L, the
+//     iShares Core S&P 500 UCITS on London; CW8 → CW8.PA on Euronext
+//     Paris). Without the suffix Yahoo returns no data.
+// Display ticker stays unchanged; only the network call uses the override.
+const YAHOO_SYMBOL_OVERRIDES = {
+  "BRK.B": "BRK-B",
+  "CSPX":  "CSPX.L",   // iShares Core S&P 500 UCITS (USD-quoted on LSE)
+  "IUIT":  "IUIT.L",   // iShares S&P 500 IT UCITS   (USD-quoted on LSE)
+  "CW8":   "CW8.PA",   // Amundi MSCI World V        (EUR-quoted on Euronext)
+  "WEBN":  "WEBN.PA",  // Amundi MSCI World Acc      (EUR-quoted on Euronext)
+};
+function toYahooSymbol(ticker) {
+  return YAHOO_SYMBOL_OVERRIDES[ticker] || ticker;
+}
+
 async function fetchYahooQuote(ticker) {
-  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(ticker)}?interval=1d&range=2d`;
+  const sym = toYahooSymbol(ticker);
+  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(sym)}?interval=1d&range=2d`;
   const res = await fetch(url, { mode: "cors" });
   if (!res.ok) throw new Error(`yahoo ${ticker} ${res.status}`);
   const j = await res.json();
