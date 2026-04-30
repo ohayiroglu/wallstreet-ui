@@ -19,7 +19,12 @@ const state = {
   transactions: [], // [{date, action, ticker, shares, price, amount, strategy/portfolio}]
   tickerIndex: [],  // [{t, n, s}]
   pendingCsvRows: null,
-  livePrices: {},  // ticker → {price, prevClose, change, changePct, dayHigh, dayLow, w52High, w52Low, ts}
+  livePrices: {},  // ticker → {price, prevClose, change, changePct, dayHigh, dayLow, w52High, w52Low, currency, ts}
+  // FX rate cache: USD per 1 EUR (Yahoo's EURUSD=X convention, ~1.07).
+  // Live US-listed prices come back in USD; for an EUR portfolio view we
+  // divide by this rate. null = not loaded yet → conversion-needing rows
+  // will display "—" rather than show an unconverted number.
+  fxRates: { eur_usd: null, ts: null },
   pricesLoadedAt: null,
   // Multi-portfolio state. The CSV `strategy` column doubles as the portfolio
   // bucket key. Buckets are case-sensitive and come from actual data — no
@@ -137,6 +142,36 @@ function quoteFromSnapshot(snapshot, ticker) {
   };
 }
 
+// EURUSD=X is Yahoo's spot rate — USD per 1 EUR (~1.07). We fetch this
+// alongside live prices so we can convert USD-denominated quotes (PYPL,
+// SOFI, etc.) into the active portfolio's display currency. If the fetch
+// fails, conversion-needing rows render "—" rather than show a wrong number.
+async function fetchFxEurUsd() {
+  try {
+    const url = "https://query1.finance.yahoo.com/v8/finance/chart/EURUSD%3DX?interval=1d&range=2d";
+    const res = await fetch(url, { mode: "cors" });
+    if (!res.ok) throw new Error(`fx ${res.status}`);
+    const j = await res.json();
+    const px = Number(j?.chart?.result?.[0]?.meta?.regularMarketPrice);
+    if (px > 0) state.fxRates = { eur_usd: px, ts: Date.now() };
+  } catch (e) {
+    console.warn("EURUSD=X fetch failed:", e);
+  }
+}
+
+// Convert a price between EUR and USD. Returns null if rate isn't loaded
+// (caller should render "—"). For unsupported currency pairs (e.g. GBP),
+// also returns null — we don't pretend to know the rate.
+function convertPrice(price, fromCcy, toCcy) {
+  if (price == null) return null;
+  if (fromCcy === toCcy) return price;
+  const r = state.fxRates?.eur_usd;
+  if (!r) return null;
+  if (fromCcy === "USD" && toCcy === "EUR") return price / r;
+  if (fromCcy === "EUR" && toCcy === "USD") return price * r;
+  return null;
+}
+
 async function refreshLivePrices() {
   const tickers = [...new Set(state.positions.map(p => p.ticker))];
   if (tickers.length === 0) return;
@@ -144,14 +179,17 @@ async function refreshLivePrices() {
   status.textContent = `Fetching ${tickers.length} prices...`;
 
   let ok = 0, yahooFail = 0;
-  await Promise.all(tickers.map(async t => {
-    try {
-      state.livePrices[t] = await fetchYahooQuote(t);
-      ok++;
-    } catch (e) {
-      yahooFail++;
-    }
-  }));
+  await Promise.all([
+    fetchFxEurUsd(),
+    ...tickers.map(async t => {
+      try {
+        state.livePrices[t] = await fetchYahooQuote(t);
+        ok++;
+      } catch (e) {
+        yahooFail++;
+      }
+    }),
+  ]);
 
   // Fill any gap from the daily snapshot
   let snapshotInfo = null;
@@ -238,10 +276,9 @@ function renderPortfolioSelector() {
   }
   if (state.portfolios.includes(cur) || cur === "__all__") sel.value = cur;
   else { sel.value = "__all__"; state.activePortfolio = "__all__"; }
-  // meta
-  const n = state.activePortfolio === "__all__"
-    ? state.positions.length
-    : state.positions.filter(p => p.strategy === state.activePortfolio).length;
+  // meta — count visible (resolved) positions; hidden ISIN count is reported
+  // separately by the per-table footer note.
+  const n = filteredPositions().length;
   document.getElementById("portfolio-meta").textContent =
     `${n} position(s) in this view • ${state.portfolios.length} portfolio(s) total`;
 }
@@ -672,9 +709,26 @@ function fmtSigned(v) {
   return s + fmtNum(v);
 }
 
+// A ticker that still looks like a raw ISIN (12 chars: 2-letter country code
+// + 10 alphanumeric) means we couldn't resolve it to a Yahoo-listed symbol —
+// almost always a warrant, turbo, or OTC structured product without a public
+// price feed. Hide these from the holdings table by default; surface only
+// the count + cost in a footer note so the user knows they exist.
+function isUnresolvedIsin(ticker) {
+  return /^[A-Z]{2}[A-Z0-9]{9}\d$/.test(ticker || "");
+}
+
 function filteredPositions() {
-  if (!state.activePortfolio || state.activePortfolio === "__all__") return state.positions;
-  return state.positions.filter(p => p.strategy === state.activePortfolio);
+  const base = (!state.activePortfolio || state.activePortfolio === "__all__")
+    ? state.positions
+    : state.positions.filter(p => p.strategy === state.activePortfolio);
+  return base.filter(p => !isUnresolvedIsin(p.ticker));
+}
+function hiddenIsinPositions() {
+  const base = (!state.activePortfolio || state.activePortfolio === "__all__")
+    ? state.positions
+    : state.positions.filter(p => p.strategy === state.activePortfolio);
+  return base.filter(p => isUnresolvedIsin(p.ticker));
 }
 function filteredTransactions() {
   if (!state.activePortfolio || state.activePortfolio === "__all__") return state.transactions;
@@ -690,14 +744,24 @@ function renderPortfolio() {
   const sorted = [...filteredPositions()].sort((a, b) => b.cost_basis - a.cost_basis);
 
   // Currency symbol for this view (auto-detected from active portfolio).
-  const sym = curSym(activeCurrency());
+  const display = activeCurrency();
+  const sym = curSym(display);
 
   let totalCost = 0, totalValue = 0;
 
   for (const p of sorted) {
     const live = state.livePrices[p.ticker];
     const avgCost = p.shares > 0 ? p.cost_basis / p.shares : 0;
-    const value = live ? p.shares * live.price : null;
+
+    // FX-convert live quote into display currency. cost_basis is already in
+    // display currency (TR exports → EUR, UI buys → USD), so no conversion
+    // there. If live.currency != display and the FX rate hasn't loaded yet,
+    // dispPrice is null → row shows "—" rather than a wrong number.
+    const liveCcy = live?.currency || "USD";
+    const dispPrice = live ? convertPrice(live.price, liveCcy, display) : null;
+    const dispLow   = live ? convertPrice(live.w52Low,  liveCcy, display) : null;
+    const dispHigh  = live ? convertPrice(live.w52High, liveCcy, display) : null;
+    const value = dispPrice != null ? p.shares * dispPrice : null;
     const pl = value !== null ? value - p.cost_basis : null;
     const plPct = (pl !== null && p.cost_basis > 0) ? (pl / p.cost_basis) * 100 : null;
 
@@ -706,16 +770,15 @@ function renderPortfolio() {
 
     // 52w range bar — marker at current price relative to [low, high]
     let rangeCell = `<span class="muted">—</span>`;
-    if (live && live.w52High > live.w52Low && live.w52Low > 0) {
-      const lo = live.w52Low, hi = live.w52High, px = live.price;
-      const pct = Math.max(0, Math.min(100, ((px - lo) / (hi - lo)) * 100));
+    if (dispLow != null && dispHigh != null && dispHigh > dispLow && dispLow > 0) {
+      const pct = Math.max(0, Math.min(100, ((dispPrice - dispLow) / (dispHigh - dispLow)) * 100));
       rangeCell = `
-        <span class="muted" style="font-size:11px;">${sym}${fmtNum(lo)}</span>
+        <span class="muted" style="font-size:11px;">${sym}${fmtNum(dispLow)}</span>
         <span class="range-bar"><span class="marker" style="left:${pct.toFixed(0)}%"></span></span>
-        <span class="muted" style="font-size:11px;">${sym}${fmtNum(hi)}</span>`;
+        <span class="muted" style="font-size:11px;">${sym}${fmtNum(dispHigh)}</span>`;
     }
 
-    // Day delta cell
+    // Day delta cell — pct change is currency-agnostic
     let dayCell = `<span class="muted">—</span>`;
     if (live) {
       const cls = live.changePct > 0 ? "day-delta-pos" : live.changePct < 0 ? "day-delta-neg" : "";
@@ -738,7 +801,7 @@ function renderPortfolio() {
       <td class="muted" style="font-size:12px;">${p.sector || ""}</td>
       <td class="num">${p.shares.toFixed(4).replace(/\.?0+$/, "")}</td>
       <td class="num">${sym}${fmtNum(avgCost)}</td>
-      <td class="num">${live ? sym + fmtNum(live.price) : "<span class='muted'>—</span>"}</td>
+      <td class="num">${dispPrice != null ? sym + fmtNum(dispPrice) : "<span class='muted'>—</span>"}</td>
       <td class="num">${dayCell}</td>
       <td class="num">${rangeCell}</td>
       <td class="num">${value !== null ? sym + fmtNum(value, 0) : "<span class='muted'>—</span>"}</td>
@@ -768,6 +831,18 @@ function renderPortfolio() {
     plEl.innerHTML = `<span class="${totalPL >= 0 ? "pl-pos" : "pl-neg"}">${sign}${sym}${fmtNum(Math.abs(totalPL), 0)} (${sign}${fmtNum(totalPLPct, 1)}%)</span>`;
   } else {
     plEl.textContent = "—";
+  }
+
+  // Footer note for warrants / OTC structured products with no Yahoo feed.
+  const hidden = hiddenIsinPositions();
+  const noteEl = document.getElementById("hidden-positions-note");
+  if (hidden.length > 0) {
+    const hiddenCost = hidden.reduce((a, p) => a + p.cost_basis, 0);
+    const tickers = hidden.map(p => p.ticker).join(", ");
+    noteEl.textContent = `+ ${hidden.length} hidden position(s) without price feed (warrants/structured products) — ${sym}${fmtNum(hiddenCost, 0)} cost: ${tickers}`;
+    noteEl.classList.remove("hidden");
+  } else {
+    noteEl.classList.add("hidden");
   }
 }
 
